@@ -1,0 +1,750 @@
+package art.arcane.volmlib.util.inventorygui;
+
+import art.arcane.volmlib.util.collection.KMap;
+import art.arcane.volmlib.util.collection.KSet;
+import art.arcane.volmlib.util.localization.LanguageAudience;
+import art.arcane.volmlib.util.scheduling.Callback;
+import art.arcane.volmlib.util.scheduling.FoliaScheduler;
+import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.HandlerList;
+import org.bukkit.event.Listener;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.inventory.InventoryType;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryView;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.plugin.java.JavaPlugin;
+
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+public class UIWindow implements Window, Listener {
+    private static final Method INVENTORY_CLOSE_GET_REASON = resolveInventoryCloseGetReason();
+    private static final Method INVENTORY_VIEW_GET_TITLE = resolveInventoryViewMethod("getTitle");
+    private static final Method INVENTORY_VIEW_GET_TOP_INVENTORY = resolveInventoryViewMethod("getTopInventory");
+    private static final Map<UUID, UIWindow> ACTIVE_WINDOWS = new ConcurrentHashMap<>();
+    private final JavaPlugin plugin;
+    private final Player viewer;
+    private final UUID viewerId;
+    private final KMap<Integer, Element> elements;
+    private final AtomicBoolean deactivationPending;
+    private WindowDecorator decorator;
+    private Callback<Window> eClose;
+    private WindowResolution resolution;
+    private String title;
+    private boolean visible;
+    private int viewportPosition;
+    private int viewportSize;
+    private int highestRow;
+    private Inventory inventory;
+    private int clickcheck;
+    private boolean batching;
+    private boolean doubleclicked;
+    private String tag;
+
+    public UIWindow(JavaPlugin plugin, Player viewer) {
+        this.plugin = plugin;
+        this.viewer = viewer;
+        this.viewerId = viewer.getUniqueId();
+        this.elements = new KMap<>();
+        this.deactivationPending = new AtomicBoolean(false);
+        this.clickcheck = 0;
+        this.doubleclicked = false;
+        setTitle("");
+        setDecorator(new UIVoidDecorator());
+        setResolution(WindowResolution.W9_H6);
+        setViewportHeight(clip(3, 1, getResolution().getMaxHeight()).intValue());
+        setViewportPosition(0);
+        setTag(null);
+    }
+
+    @EventHandler
+    public void on(InventoryClickEvent e) {
+        if (e.getWhoClicked().equals(viewer)) {
+            LanguageAudience.run(viewer.getUniqueId(), () -> handleClick(e));
+        }
+    }
+
+    private void handleClick(InventoryClickEvent e) {
+        if (!e.getWhoClicked().equals(viewer)) {
+            return;
+        }
+
+        if (!isVisible()) {
+            return;
+        }
+
+        if (inventory == null) {
+            return;
+        }
+
+        if (!e.getInventory().equals(inventory)) {
+            return;
+        }
+
+        if (e.getClickedInventory() == null) {
+            return;
+        }
+
+        if (!e.getInventory().getType().equals(getResolution().getType())) {
+            return;
+        }
+
+        if (e.getClickedInventory().getType().equals(getResolution().getType())) {
+            Element element = getElement(getLayoutPosition(e.getSlot()), getLayoutRow(e.getSlot()));
+
+            switch (e.getAction()) {
+                case CLONE_STACK:
+                case UNKNOWN:
+                case SWAP_WITH_CURSOR:
+                case PLACE_SOME:
+                case PLACE_ONE:
+                case PLACE_ALL:
+                case PICKUP_SOME:
+                case PICKUP_ONE:
+                case PICKUP_HALF:
+                case PICKUP_ALL:
+                case NOTHING:
+                case MOVE_TO_OTHER_INVENTORY:
+                case HOTBAR_SWAP:
+                case HOTBAR_MOVE_AND_READD:
+                case DROP_ONE_SLOT:
+                case DROP_ONE_CURSOR:
+                case DROP_ALL_SLOT:
+                case DROP_ALL_CURSOR:
+                case COLLECT_TO_CURSOR:
+                    break;
+            }
+
+            switch (e.getClick()) {
+                case DOUBLE_CLICK:
+                    doubleclicked = true;
+                    break;
+                case LEFT:
+                    clickcheck++;
+
+                    if (clickcheck == 1) {
+                        queueSync(() -> {
+                            if (clickcheck == 1) {
+                                clickcheck = 0;
+
+                                if (element != null) {
+                                    element.call(ElementEvent.LEFT, element);
+                                }
+                            }
+                        });
+                    } else if (clickcheck == 2) {
+                        queueSync(() -> {
+                            if (doubleclicked) {
+                                doubleclicked = false;
+                            } else {
+                                scroll(1);
+                            }
+
+                            clickcheck = 0;
+                        });
+                    }
+
+                    break;
+                case RIGHT:
+                    if (element != null) {
+                        element.call(ElementEvent.RIGHT, element);
+                    } else {
+                        scroll(-1);
+                    }
+                    break;
+                case MIDDLE:
+                    if (element != null) {
+                        element.call(ElementEvent.MIDDLE, element);
+                    }
+                    break;
+                case SHIFT_LEFT:
+                    if (element != null) {
+                        element.call(ElementEvent.SHIFT_LEFT, element);
+                    }
+                    break;
+                case SHIFT_RIGHT:
+                    if (element != null) {
+                        element.call(ElementEvent.SHIFT_RIGHT, element);
+                    }
+                    break;
+                case SWAP_OFFHAND:
+                case UNKNOWN:
+                case WINDOW_BORDER_RIGHT:
+                case WINDOW_BORDER_LEFT:
+                case NUMBER_KEY:
+                case DROP:
+                case CREATIVE:
+                case CONTROL_DROP:
+                default:
+                    break;
+            }
+        }
+
+        e.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void on(InventoryDragEvent event) {
+        if (event.getWhoClicked().equals(viewer)) {
+            LanguageAudience.run(viewerId, () -> handleDrag(event));
+        }
+    }
+
+    private void handleDrag(InventoryDragEvent event) {
+        if (!isVisible() || inventory == null) {
+            return;
+        }
+
+        Inventory topInventory = inventoryViewTopInventory(event.getView());
+        if (topInventory == null || !topInventory.equals(inventory)) {
+            return;
+        }
+
+        int topSize = topInventory.getSize();
+        for (int rawSlot : event.getRawSlots()) {
+            if (rawSlot >= 0 && rawSlot < topSize) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+    }
+
+    @EventHandler
+    public void on(InventoryCloseEvent e) {
+        if (!e.getPlayer().equals(viewer)) {
+            return;
+        }
+
+        if (inventory == null) {
+            return;
+        }
+
+        if (!e.getInventory().equals(inventory)) {
+            return;
+        }
+
+        if (isVisible()) {
+            deactivate(false);
+
+            if (isImmediateCloseReason(inventoryCloseReason(e))) {
+                callClosed();
+                return;
+            }
+
+            AtomicBoolean closedOnce = new AtomicBoolean(false);
+            Runnable closeOnce = () -> {
+                if (closedOnce.compareAndSet(false, true)) {
+                    callClosed();
+                }
+            };
+
+            if (!queueSync(closeOnce, closeOnce)) {
+                closeOnce.run();
+            }
+        }
+    }
+
+    static boolean isImmediateCloseReason(Object reason) {
+        if (!(reason instanceof Enum<?> closeReason)) {
+            return false;
+        }
+        return switch (closeReason.name()) {
+            case "DISCONNECT", "UNLOADED", "DEATH" -> true;
+            default -> false;
+        };
+    }
+
+    private boolean queueSync(Runnable runnable) {
+        return queueSync(runnable, null);
+    }
+
+    private boolean queueSync(Runnable runnable, Runnable retired) {
+        if (runnable == null || plugin == null || !plugin.isEnabled()) {
+            return false;
+        }
+
+        return FoliaScheduler.runEntity(plugin, viewer, runnable, 1L, retired);
+    }
+
+    private static Method resolveInventoryCloseGetReason() {
+        try {
+            return InventoryCloseEvent.class.getMethod("getReason");
+        } catch (NoSuchMethodException exception) {
+            return null;
+        }
+    }
+
+    private static Method resolveInventoryViewMethod(String name) {
+        try {
+            return InventoryView.class.getMethod(name);
+        } catch (NoSuchMethodException exception) {
+            throw new ExceptionInInitializerError(exception);
+        }
+    }
+
+    public static Inventory inventoryViewTopInventory(InventoryView view) {
+        return (Inventory) invokeInventoryViewMethod(view, INVENTORY_VIEW_GET_TOP_INVENTORY);
+    }
+
+    static String inventoryViewTitle(InventoryView view) {
+        return (String) invokeInventoryViewMethod(view, INVENTORY_VIEW_GET_TITLE);
+    }
+
+    private static Object invokeInventoryViewMethod(InventoryView view, Method method) {
+        if (view == null) {
+            return null;
+        }
+        try {
+            return method.invoke(view);
+        } catch (IllegalAccessException | InvocationTargetException exception) {
+            throw new IllegalStateException("Failed to invoke InventoryView." + method.getName(), exception);
+        }
+    }
+
+    private static Object inventoryCloseReason(InventoryCloseEvent event) {
+        if (INVENTORY_CLOSE_GET_REASON == null) {
+            return null;
+        }
+        try {
+            return INVENTORY_CLOSE_GET_REASON.invoke(event);
+        } catch (IllegalAccessException | InvocationTargetException exception) {
+            return null;
+        }
+    }
+
+    @Override
+    public WindowDecorator getDecorator() {
+        return decorator;
+    }
+
+    @Override
+    public UIWindow setDecorator(WindowDecorator decorator) {
+        this.decorator = decorator;
+        return this;
+    }
+
+    @Override
+    public UIWindow close() {
+        setVisible(false);
+        return this;
+    }
+
+    @Override
+    public UIWindow open() {
+        setVisible(true);
+        return this;
+    }
+
+    @Override
+    public boolean isVisible() {
+        return visible;
+    }
+
+    @Override
+    public UIWindow setVisible(boolean visible) {
+        if (visible && deactivationPending.compareAndSet(true, false)) {
+            return this;
+        }
+
+        if (!visible && deactivationPending.get()) {
+            return this;
+        }
+
+        if (isVisible() == visible) {
+            return this;
+        }
+
+        if (visible) {
+            UIWindow activeWindow = ACTIVE_WINDOWS.get(viewer.getUniqueId());
+            if (activeWindow != null && activeWindow != this) {
+                activeWindow.deactivate(false);
+            }
+
+            Bukkit.getPluginManager().registerEvents(this, plugin);
+
+            InventoryView activeView = viewer.getOpenInventory();
+            Inventory activeTopInventory = inventoryViewTopInventory(activeView);
+            boolean reuse = canReuseInventory(activeTopInventory, inventoryViewTitle(activeView));
+            if (reuse) {
+                inventory = activeTopInventory;
+            } else if (getResolution().getType().equals(InventoryType.CHEST)) {
+                inventory = Bukkit.createInventory(null, getViewportHeight() * 9, getTitle());
+            } else {
+                inventory = Bukkit.createInventory(null, getResolution().getType(), getTitle());
+            }
+
+            this.visible = true;
+            ACTIVE_WINDOWS.put(viewer.getUniqueId(), this);
+            updateInventory();
+
+            if (!reuse) {
+                viewer.openInventory(inventory);
+            }
+        } else {
+            deactivate(true);
+        }
+
+        return this;
+    }
+
+    @Override
+    public int getViewportPosition() {
+        return viewportPosition;
+    }
+
+    @Override
+    public UIWindow setViewportPosition(int viewportPosition) {
+        this.viewportPosition = viewportPosition;
+        scroll(0);
+        updateInventory();
+
+        return this;
+    }
+
+    @Override
+    public int getMaxViewportPosition() {
+        return maxViewportPosition(highestRow, getViewportHeight());
+    }
+
+    /** Rows are zero-indexed, so the last content row only becomes visible at highestRow + 1 - viewportHeight. */
+    public static int maxViewportPosition(int highestRow, int viewportHeight) {
+        return Math.max(0, highestRow + 1 - viewportHeight);
+    }
+
+    @Override
+    public UIWindow scroll(int direction) {
+        viewportPosition = (int) clip(viewportPosition + direction, 0, getMaxViewportPosition()).doubleValue();
+        updateInventory();
+
+        return this;
+    }
+
+    @Override
+    public int getViewportHeight() {
+        return viewportSize;
+    }
+
+    @Override
+    public UIWindow setViewportHeight(int height) {
+        viewportSize = (int) clip(height, 1, getResolution().getMaxHeight()).doubleValue();
+
+        if (isVisible()) {
+            reopen();
+        }
+
+        return this;
+    }
+
+    @Override
+    public String getTitle() {
+        return title;
+    }
+
+    @Override
+    public UIWindow setTitle(String title) {
+        this.title = title;
+
+        if (isVisible()) {
+            reopen();
+        }
+
+        return this;
+    }
+
+    @Override
+    public String getTag() {
+        return tag;
+    }
+
+    @Override
+    public UIWindow setTag(String tag) {
+        this.tag = tag;
+        return this;
+    }
+
+    @Override
+    public UIWindow setElement(int position, int row, Element e) {
+        if (row > highestRow) {
+            highestRow = row;
+        }
+
+        elements.put(getRealPosition((int) clip(position, -getResolution().getMaxWidthOffset(), getResolution().getMaxWidthOffset()).doubleValue(), row), e);
+        if (!batching) {
+            updateInventory();
+        }
+        return this;
+    }
+
+    @Override
+    public UIWindow updateElement(int position, int row, Element element) {
+        if (!FoliaScheduler.isOwnedByCurrentRegion(viewer)) {
+            queueSync(() -> updateElement(position, row, element));
+            return this;
+        }
+        if (!visible || inventory == null || ACTIVE_WINDOWS.get(viewerId) != this
+                || inventoryViewTopInventory(viewer.getOpenInventory()) != inventory) {
+            return this;
+        }
+
+        int realPosition = getRealPosition(position, row);
+        highestRow = Math.max(highestRow, row);
+        if (element == null) {
+            elements.remove(realPosition);
+        } else {
+            elements.put(realPosition, element);
+        }
+        int viewportSlot = realPosition - getViewportPosition() * getResolution().getWidth();
+        if (viewportSlot < 0 || viewportSlot >= inventory.getSize()) {
+            return this;
+        }
+        LanguageAudience.run(viewerId, () -> {
+            ItemStack replacement = computeItemStack(viewportSlot);
+            ItemStack current = inventory.getItem(viewportSlot);
+            if (current == null ? replacement != null : !current.equals(replacement)) {
+                inventory.setItem(viewportSlot, replacement);
+            }
+        });
+        return this;
+    }
+
+    @Override
+    public Element getElement(int position, int row) {
+        return elements.get(getRealPosition((int) clip(position, -getResolution().getMaxWidthOffset(), getResolution().getMaxWidthOffset()).doubleValue(), row));
+    }
+
+    @Override
+    public Player getViewer() {
+        return viewer;
+    }
+
+    @Override
+    public UIWindow onClosed(Callback<Window> window) {
+        eClose = window;
+        return this;
+    }
+
+    @Override
+    public int getViewportSlots() {
+        return getViewportHeight() * getResolution().getWidth();
+    }
+
+    @Override
+    public int getLayoutRow(int viewportSlottedPosition) {
+        return getRow(getRealLayoutPosition(viewportSlottedPosition));
+    }
+
+    @Override
+    public int getLayoutPosition(int viewportSlottedPosition) {
+        return getPosition(viewportSlottedPosition);
+    }
+
+    @Override
+    public int getRealLayoutPosition(int viewportSlottedPosition) {
+        return getRealPosition(getPosition(viewportSlottedPosition), getRow(viewportSlottedPosition) + getViewportPosition());
+    }
+
+    @Override
+    public int getRealPosition(int position, int row) {
+        return (int) (((row * getResolution().getWidth()) + getResolution().getMaxWidthOffset()) + clip(position, -getResolution().getMaxWidthOffset(), getResolution().getMaxWidthOffset()));
+    }
+
+    @Override
+    public int getRow(int realPosition) {
+        return realPosition / getResolution().getWidth();
+    }
+
+    @Override
+    public int getPosition(int realPosition) {
+        return (realPosition % getResolution().getWidth()) - getResolution().getMaxWidthOffset();
+    }
+
+    @Override
+    public Window callClosed() {
+        if (eClose != null) {
+            LanguageAudience.run(viewer.getUniqueId(), () -> eClose.run(this));
+        }
+
+        return this;
+    }
+
+    @Override
+    public boolean hasElement(int position, int row) {
+        return getElement(position, row) != null;
+    }
+
+    @Override
+    public WindowResolution getResolution() {
+        return resolution;
+    }
+
+    public Double clip(double value, double min, double max) {
+        return Math.min(max, Math.max(min, value));
+    }
+
+    @Override
+    public Window setResolution(WindowResolution resolution) {
+        close();
+        this.resolution = resolution;
+        setViewportHeight((int) clip(getViewportHeight(), 1, getResolution().getMaxHeight()).doubleValue());
+        return this;
+    }
+
+    @Override
+    public Window clearElements() {
+        highestRow = 0;
+        elements.clear();
+        if (!batching) {
+            updateInventory();
+        }
+        return this;
+    }
+
+    @Override
+    public Window batch(Runnable mutations) {
+        if (mutations == null) {
+            return this;
+        }
+        boolean wasBatching = batching;
+        batching = true;
+        try {
+            LanguageAudience.run(viewer.getUniqueId(), mutations);
+        } finally {
+            batching = wasBatching;
+        }
+        if (!batching) {
+            updateInventory();
+        }
+        return this;
+    }
+
+    @Override
+    public Window updateInventory() {
+        if (isVisible()) {
+            ItemStack[] is = inventory.getContents();
+            @SuppressWarnings("MismatchedQueryAndUpdateOfCollection") KSet<ItemStack> isf = new KSet<>();
+
+            for (int i = 0; i < is.length; i++) {
+                ItemStack isc = is[i];
+                ItemStack isx = computeItemStack(i);
+                int layoutRow = getLayoutRow(i);
+                int layoutPosition = getLayoutPosition(i);
+
+                if (isx != null && !hasElement(layoutPosition, layoutRow)) {
+                    ItemStack gg = isx.clone();
+                    gg.setAmount(gg.getAmount() + 1);
+                    isf.add(gg);
+                }
+
+                if (((isc == null) != (isx == null)) || isx != null && isc != null && !isc.equals(isx)) {
+                    inventory.setItem(i, isx);
+                }
+            }
+        }
+
+        return this;
+    }
+
+    @Override
+    public ItemStack computeItemStack(int viewportSlot) {
+        int layoutRow = getLayoutRow(viewportSlot);
+        int layoutPosition = getLayoutPosition(viewportSlot);
+        Element e = hasElement(layoutPosition, layoutRow) ? getElement(layoutPosition, layoutRow) : getDecorator().onDecorateBackground(this, layoutPosition, layoutRow);
+
+        if (e != null) {
+            return e.computeItemStack();
+        }
+
+        return null;
+    }
+
+    @Override
+    public Window reopen() {
+        return this.close().open();
+    }
+
+    private boolean canReuseInventory(Inventory activeTopInventory, String activeTitle) {
+        if (activeTopInventory == null) {
+            return false;
+        }
+
+        if (activeTopInventory.getHolder() != null) {
+            return false;
+        }
+
+        if (getResolution().getType().equals(InventoryType.CHEST)) {
+            if (!activeTopInventory.getType().equals(InventoryType.CHEST)) {
+                return false;
+            }
+
+            int expectedSize = getViewportHeight() * getResolution().getWidth();
+            if (activeTopInventory.getSize() != expectedSize) {
+                return false;
+            }
+        } else if (!activeTopInventory.getType().equals(getResolution().getType())) {
+            return false;
+        }
+
+        return activeTitle != null && activeTitle.equals(getTitle());
+    }
+
+    private void deactivate(boolean closeInventory) {
+        if (closeInventory && !FoliaScheduler.isOwnedByCurrentRegion(viewer)) {
+            scheduleDeactivation();
+            return;
+        }
+
+        deactivationPending.set(false);
+        deactivateOwned(closeInventory);
+    }
+
+    private void scheduleDeactivation() {
+        if (!deactivationPending.compareAndSet(false, true)) {
+            return;
+        }
+
+        Runnable ownerTask = () -> {
+            if (deactivationPending.compareAndSet(true, false)) {
+                deactivateOwned(true);
+            }
+        };
+        Runnable retiredTask = () -> {
+            if (deactivationPending.compareAndSet(true, false)) {
+                deactivateRetired();
+            }
+        };
+        if (!FoliaScheduler.runEntity(plugin, viewer, ownerTask, 0L, retiredTask)) {
+            retiredTask.run();
+        }
+    }
+
+    private void deactivateOwned(boolean closeInventory) {
+        Inventory currentInventory = inventory;
+        deactivateRetired();
+
+        if (!closeInventory || currentInventory == null) {
+            return;
+        }
+
+        Inventory topInventory = inventoryViewTopInventory(viewer.getOpenInventory());
+        if (topInventory != null && topInventory.equals(currentInventory)) {
+            viewer.closeInventory();
+        }
+    }
+
+    private void deactivateRetired() {
+        this.visible = false;
+        HandlerList.unregisterAll(this);
+        inventory = null;
+        ACTIVE_WINDOWS.remove(viewerId, this);
+    }
+}

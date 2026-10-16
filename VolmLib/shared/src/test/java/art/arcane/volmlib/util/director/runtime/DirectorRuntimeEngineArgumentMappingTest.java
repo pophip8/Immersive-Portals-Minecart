@@ -1,0 +1,350 @@
+package art.arcane.volmlib.util.director.runtime;
+
+import art.arcane.volmlib.util.director.annotations.Director;
+import art.arcane.volmlib.util.director.annotations.Param;
+import art.arcane.volmlib.util.director.compat.DirectorEngineFactory;
+import org.junit.Before;
+import org.junit.Test;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+
+public class DirectorRuntimeEngineArgumentMappingTest {
+    private TestCommandRoot rootCommand;
+    private DirectorRuntimeEngine engine;
+    private CapturingSender sender;
+
+    @Before
+    public void setUp() {
+        rootCommand = new TestCommandRoot();
+        engine = DirectorEngineFactory.create(rootCommand);
+        sender = new CapturingSender();
+    }
+
+    private DirectorExecutionResult run(String... args) {
+        return engine.execute(new DirectorInvocation(sender, "test", List.of(args)));
+    }
+
+    @Test
+    public void requiredParameterBindsPositionally() {
+        DirectorExecutionResult result = run("create", "MyWorld");
+
+        assertTrue(result.isSuccess());
+        assertEquals("MyWorld", rootCommand.name);
+        assertEquals("overworld", rootCommand.type);
+        assertEquals(1337L, rootCommand.seed);
+        assertFalse(rootCommand.main);
+    }
+
+    @Test
+    public void explicitEmptyDefaultsRemainOptionalAndReachTheInvokedMethod() {
+        DirectorExecutionResult omitted = run("open", "supplies");
+
+        assertTrue(omitted.isSuccess());
+        assertEquals("supplies", rootCommand.name);
+        assertEquals("", rootCommand.player);
+        assertEquals("", rootCommand.arguments);
+        assertEquals(List.of(), sender.messages);
+
+        assertTrue(run("open", "supplies", "player=Guide", "args=quantity=2").isSuccess());
+        assertEquals("Guide", rootCommand.player);
+        assertEquals("quantity=2", rootCommand.arguments);
+        assertFalse(run("open").isSuccess());
+        assertTrue(sender.messages.get(sender.messages.size() - 1).contains("name"));
+    }
+
+    @Test
+    public void absentDefaultsStayRequiredWhileExplicitEmptyDefaultsArePreserved() {
+        DirectorRuntimeNode node = engine.getRoot().getChildren().stream()
+            .filter(child -> child.getDescriptor().getName().equals("open")).findFirst().orElseThrow();
+        List<DirectorParameterDescriptor> parameters = node.getDescriptor().getParameters();
+
+        assertTrue(parameters.get(0).isRequired());
+        assertNull(parameters.get(0).getDefaultValue());
+        assertFalse(parameters.get(1).isRequired());
+        assertEquals("", parameters.get(1).getDefaultValue());
+        assertFalse(parameters.get(2).isRequired());
+        assertEquals("", parameters.get(2).getDefaultValue());
+        assertFalse(run("open", "supplies", "Guide").isSuccess());
+    }
+
+    @Test
+    public void multipleRequiredParametersBindPositionallyInOrder() {
+        DirectorExecutionResult result = run("link", "from", "to");
+
+        assertTrue(result.isSuccess());
+        assertEquals("from", rootCommand.linkSource);
+        assertEquals("to", rootCommand.linkTarget);
+    }
+
+    @Test
+    public void optionalParametersBindWhenKeyed() {
+        DirectorExecutionResult result = run("create", "MyWorld", "seed=69420", "main=true", "type=flat");
+
+        assertEquals(List.of(), sender.messages);
+        assertTrue(result.isSuccess());
+        assertEquals("MyWorld", rootCommand.name);
+        assertEquals("flat", rootCommand.type);
+        assertEquals(69420L, rootCommand.seed);
+        assertTrue(rootCommand.main);
+    }
+
+    @Test
+    public void requiredParameterAcceptsKeyedForm() {
+        DirectorExecutionResult result = run("create", "name=MyWorld", "seed=5");
+
+        assertTrue(result.isSuccess());
+        assertEquals("MyWorld", rootCommand.name);
+        assertEquals(5L, rootCommand.seed);
+    }
+
+    @Test
+    public void pretokenizedInvocationPreservesOneSemanticArgumentLosslessly() {
+        String text = "Say \"hello\" to the <gold>whole world";
+        DirectorExecutionResult result = engine.execute(DirectorInvocation.pretokenized(
+                sender, "test", List.of("echo", "text=" + text)));
+
+        assertTrue(result.isSuccess());
+        assertEquals(text, rootCommand.text);
+    }
+
+    @Test
+    public void optionalParameterRejectsPositionalValue() {
+        DirectorExecutionResult result = run("create", "MyWorld", "flat");
+
+        assertFalse(result.isSuccess());
+        assertNull(rootCommand.name);
+    }
+
+    @Test
+    public void barePositionalFloodFails() {
+        DirectorExecutionResult result = run("create", "69420", "true", "true", "true", "overworld");
+
+        assertFalse(result.isSuccess());
+        assertNull(rootCommand.name);
+        assertFalse(rootCommand.main);
+    }
+
+    @Test
+    public void unknownParameterKeyFails() {
+        DirectorExecutionResult result = run("create", "MyWorld", "zzzqqq=5");
+
+        assertFalse(result.isSuccess());
+        assertNull(rootCommand.name);
+    }
+
+    @Test
+    public void mappingFailureReportsOnlyItsSpecificError() {
+        DirectorExecutionResult result = run("create", "MyWorld", "flat");
+
+        assertTrue(result.isHandled());
+        assertFalse(result.isSuccess());
+        assertEquals(List.of("Unexpected argument \"flat\". Optional parameters must be keyed, e.g. seed=123"),
+                sender.messages);
+        assertEquals(sender.messages.get(0), result.getMessage());
+    }
+
+    @Test
+    public void unknownParameterReportsOnlyItsSpecificError() {
+        DirectorExecutionResult result = run("create", "MyWorld", "zzzqqq=5");
+
+        assertTrue(result.isHandled());
+        assertFalse(result.isSuccess());
+        assertEquals(List.of("Unknown parameter key: zzzqqq"), sender.messages);
+        assertEquals(sender.messages.get(0), result.getMessage());
+    }
+
+    @Test
+    public void tabCompleteKeysRequiredAndOptionalValues() {
+        List<String> suggestions = engine.tabComplete(new DirectorInvocation(sender, "test", List.of("create", "")));
+
+        assertFalse(suggestions.contains("true"));
+        assertFalse(suggestions.contains("false"));
+        assertFalse(suggestions.contains("main="));
+        assertTrue(suggestions.contains("name="));
+        assertTrue(suggestions.contains("main=false"));
+        assertTrue(suggestions.contains("main=true"));
+        assertTrue(suggestions.contains("seed="));
+        assertTrue(suggestions.contains("type="));
+    }
+
+    @Test
+    public void tabCompleteKeepsArbitraryTypedValuesIntact() {
+        List<String> radius = engine.tabComplete(
+                new DirectorInvocation(sender, "test", List.of("pregen", "radius=4000")));
+        List<String> name = engine.tabComplete(
+                new DirectorInvocation(sender, "test", List.of("create", "name=MyWorld")));
+
+        assertEquals(List.of("radius=4000"), radius);
+        assertEquals(List.of("name=MyWorld"), name);
+    }
+
+    @Test
+    public void tabCompleteUsesCanonicalKeyForAliasesAndDoesNotRepeatConsumedValues() {
+        List<String> alias = engine.tabComplete(
+                new DirectorInvocation(sender, "test", List.of("create", "world-name=MyWorld")));
+        List<String> remaining = engine.tabComplete(
+                new DirectorInvocation(sender, "test", List.of("create", "name=MyWorld", "")));
+
+        assertEquals(List.of("name=MyWorld"), alias);
+        assertFalse(remaining.contains("name="));
+    }
+
+    @Test
+    public void tabCompleteExposesOnlyConfigurableContextualOverrides() {
+        List<String> configurable = engine.tabComplete(
+                new DirectorInvocation(sender, "test", List.of("contextual", "")));
+        List<String> injected = engine.tabComplete(
+                new DirectorInvocation(sender, "test", List.of("injected", "")));
+
+        assertEquals(List.of("world="), configurable);
+        assertEquals(List.of(), injected);
+    }
+
+    @Test
+    public void keyedValueCompletionDoesNotRequireEditingTheAcceptedKey() {
+        List<String> suggestions = engine.tabComplete(
+                new DirectorInvocation(sender, "test", List.of("create", "MyWorld", "main=")));
+
+        assertEquals(List.of("main=false", "main=true"), suggestions);
+    }
+
+    @Test
+    public void tabCompleteShowsCanonicalCommandsWithoutAliasClutter() {
+        List<String> suggestions = engine.tabComplete(
+                new DirectorInvocation(sender, "test", List.of("")));
+
+        assertTrue(suggestions.contains("create"));
+        assertFalse(suggestions.contains("make"));
+        assertTrue(run("make", "MyWorld").isSuccess());
+    }
+
+    @Test
+    public void carriesOptionalDescriptionKeysIntoRuntimeDescriptors() {
+        DirectorRuntimeNode createNode = null;
+        DirectorRuntimeNode linkNode = null;
+        for (DirectorRuntimeNode child : engine.getRoot().getChildren()) {
+            if (child.getDescriptor().getName().equals("create")) {
+                createNode = child;
+            } else if (child.getDescriptor().getName().equals("link")) {
+                linkNode = child;
+            }
+        }
+
+        assertNotNull(createNode);
+        assertNotNull(linkNode);
+        assertEquals("director.test.root", engine.getRoot().getDescriptor().getDescriptionKey());
+        assertEquals("director.test.create", createNode.getDescriptor().getDescriptionKey());
+        assertEquals("director.test.create.name", createNode.getDescriptor().getParameters().get(0).getDescriptionKey());
+        assertEquals("", linkNode.getDescriptor().getDescriptionKey());
+        assertEquals("", linkNode.getDescriptor().getParameters().get(0).getDescriptionKey());
+        assertEquals("Link two things", linkNode.getDescriptor().getDescription());
+        assertEquals("Source", linkNode.getDescriptor().getParameters().get(0).getDescription());
+
+        DirectorRuntimeNode undocumentedNode = engine.getRoot().getChildren().stream()
+                .filter(node -> node.getDescriptor().getName().equals("undocumented"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("", undocumentedNode.getDescriptor().getDescription());
+        assertEquals("", undocumentedNode.getDescriptor().getParameters().get(0).getDescription());
+    }
+
+    @Director(name = "test", description = "Test root", descriptionKey = "director.test.root")
+    public static class TestCommandRoot {
+        String name;
+        String type;
+        long seed;
+        boolean main;
+        String linkSource;
+        String linkTarget;
+        String text;
+        String player;
+        String arguments;
+
+        @Director
+        public void open(@Param(name = "name") String name,
+                         @Param(name = "player", defaultValue = "") String player,
+                         @Param(name = "args", defaultValue = "") String arguments) {
+            this.name = name;
+            this.player = player;
+            this.arguments = arguments;
+        }
+
+        @Director(aliases = {"make"}, description = "Create a world", descriptionKey = "director.test.create")
+        public void create(
+                @Param(name = "name", description = "World name", descriptionKey = "director.test.create.name")
+                String name,
+                @Param(name = "type", description = "Pack type", defaultValue = "overworld")
+                String type,
+                @Param(name = "seed", description = "World seed", defaultValue = "1337")
+                long seed,
+                @Param(name = "main", description = "Main world", defaultValue = "false")
+                boolean main
+        ) {
+            this.name = name;
+            this.type = type;
+            this.seed = seed;
+            this.main = main;
+        }
+
+        @Director(description = "Link two things")
+        public void link(
+                @Param(name = "source", description = "Source")
+                String source,
+                @Param(name = "target", description = "Target")
+                String target
+        ) {
+            this.linkSource = source;
+            this.linkTarget = target;
+        }
+
+        @Director
+        public void echo(@Param(name = "text") String text) {
+            this.text = text;
+        }
+
+        @Director
+        public void pregen(@Param(name = "radius") int radius) {
+        }
+
+        @Director
+        public void contextual(
+                @Param(name = "world", contextual = true, contextualOverride = true)
+                String world
+        ) {
+        }
+
+        @Director
+        public void injected(@Param(name = "sender", contextual = true) String sender) {
+        }
+
+        @Director
+        public void undocumented(@Param(name = "value") String value) {
+        }
+    }
+
+    private static final class CapturingSender implements DirectorSender {
+        private final List<String> messages = new ArrayList<>();
+
+        @Override
+        public String getName() {
+            return "test";
+        }
+
+        @Override
+        public boolean isPlayer() {
+            return false;
+        }
+
+        @Override
+        public void sendMessage(String message) {
+            messages.add(message);
+        }
+    }
+}

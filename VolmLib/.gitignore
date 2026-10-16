@@ -1,0 +1,19 @@
+
+.idea/
+.gradle/
+build/
+logs/
+shared/build/
+
+.codegraph/
+
+AGENTS.md
+
+# Local build tooling, not part of the project
+build-lt.sh
+BUILDS/
+.run/
+.worktrees/
+.qa/
+
+shared/native/billow/target/

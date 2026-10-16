@@ -1,0 +1,177 @@
+package art.arcane.wormholes.portal;
+
+import art.arcane.wormholes.util.BukkitGeometry;
+
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Player;
+import org.bukkit.util.Vector;
+
+import art.arcane.wormholes.Wormholes;
+import art.arcane.wormholes.access.PortalAdmission;
+import art.arcane.optics.math.Box;
+import art.arcane.optics.math.Face;
+import art.arcane.optics.frame.Frame;
+
+final class LocalPortalGate
+{
+	private final LocalPortal portal;
+	private volatile boolean open;
+	private volatile boolean ambientAttended = true;
+	private Box view;
+	private double viewRange;
+
+	LocalPortalGate(LocalPortal portal)
+	{
+		this.portal = portal;
+		open = false;
+	}
+
+	boolean isOpen()
+	{
+		return open;
+	}
+
+	void assignOpen(boolean open)
+	{
+		this.open = open;
+	}
+
+	void setOpen(boolean open)
+	{
+		boolean changed = this.open != open;
+		this.open = open;
+		if(changed)
+		{
+			portal.traversal().invalidateCaptures();
+		}
+		if(changed && Wormholes.instance != null && Wormholes.effectManager != null)
+		{
+			if(open)
+			{
+				portal.playEffect(PortalEffect.OPEN);
+			}
+			else
+			{
+				portal.playEffect(PortalEffect.CLOSE);
+			}
+		}
+
+		if(changed && portal.isGateway() && Wormholes.portalSyncService != null)
+		{
+			Wormholes.portalSyncService.broadcastPortal(portal);
+		}
+		if(changed)
+		{
+			Wormholes.v("QA_EVT {\"event\":\"portal_state\",\"status\":\"info\",\"details\":\"" + (open ? "open" : "closed")
+					+ "\",\"context\":{\"portal\":\"" + portal.getId() + "\",\"gateway\":" + portal.isGateway() + "}}");
+		}
+	}
+
+	boolean isAmbientAttended()
+	{
+		return ambientAttended;
+	}
+
+	void setAmbientAttended(boolean attended)
+	{
+		ambientAttended = attended;
+	}
+
+	boolean canDepart(Entity entity)
+	{
+		LocalPortalSettings settings = portal.settings();
+		if(settings.isMirrorMode())
+		{
+			return false;
+		}
+		if(entity instanceof Player player && PortalAdmission.bypassesAccess(player))
+		{
+			return true;
+		}
+		return settings.isOutgoingTraversalsEnabled() && allowsPortalPermission(entity);
+	}
+
+	boolean canArrive(Entity entity)
+	{
+		LocalPortalSettings settings = portal.settings();
+		if(settings.isMirrorMode())
+		{
+			return false;
+		}
+		if(entity instanceof Player player && PortalAdmission.bypassesAccess(player))
+		{
+			return true;
+		}
+		return settings.isIncomingTraversalsEnabled() && allowsPortalPermission(entity);
+	}
+
+	/**
+	 * One aliased per-portal node, evaluated the same way the access gate evaluates it, so a rename never
+	 * costs a player a node they already hold and never asks them to hold two.
+	 */
+	private boolean allowsPortalPermission(Entity entity)
+	{
+		if(!(entity instanceof Player player))
+		{
+			return true;
+		}
+		return PortalAdmission.allows(portal, player);
+	}
+
+	void setDirection(Face d)
+	{
+		portal.applyFrame(portal.getFrame().withNormal(d));
+		invalidateProjection();
+		portal.save();
+		portal.settings().refreshOpenMenusUnlessApplyingRemote();
+		syncGatewayTickets();
+	}
+
+	void setFrame(Frame frame)
+	{
+		portal.applyFrame(frame);
+		invalidateProjection();
+		portal.save();
+		portal.settings().refreshOpenMenusUnlessApplyingRemote();
+		syncGatewayTickets();
+	}
+
+	Box getView()
+	{
+		if(view == null || viewRange != portal.getEffectiveActivationRange())
+		{
+			view = computeView();
+		}
+		return view;
+	}
+
+	void rebuildView()
+	{
+		view = computeView();
+	}
+
+	private Box computeView()
+	{
+		double range = portal.getEffectiveActivationRange();
+		viewRange = range;
+		Vector pad = new Vector(-range, -range, -range);
+		Vector padPositive = new Vector(range, range, range);
+		return new Box(portal.getStructure().getArea().min().add(BukkitGeometry.vector(pad)), portal.getStructure().getArea().max().add(BukkitGeometry.vector(padPositive)));
+	}
+
+	void syncGatewayTickets()
+	{
+		if(Wormholes.viewServer != null)
+		{
+			Wormholes.viewServer.syncGatewayTickets();
+		}
+	}
+
+	void invalidateProjection()
+	{
+		if(Wormholes.projectionManager != null)
+		{
+			Wormholes.projectionManager.removeProjector(portal);
+		}
+	}
+}

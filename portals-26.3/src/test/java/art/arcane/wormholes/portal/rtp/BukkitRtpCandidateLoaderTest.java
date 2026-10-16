@@ -1,0 +1,75 @@
+package art.arcane.wormholes.portal.rtp;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+
+import java.util.function.IntPredicate;
+
+import org.bukkit.HeightMap;
+import org.junit.jupiter.api.Test;
+
+public final class BukkitRtpCandidateLoaderTest
+{
+	@Test
+	public void unsafeSurfaceIncludesFluidsAndTreeCanopies()
+	{
+		assertEquals(HeightMap.MOTION_BLOCKING_NO_LEAVES,
+				BukkitRtpCandidateLoader.surfaceHeightMap(RtpSafetyMode.SAFE));
+		assertEquals(HeightMap.MOTION_BLOCKING,
+				BukkitRtpCandidateLoader.surfaceHeightMap(RtpSafetyMode.UNSAFE));
+	}
+
+	@Test
+	public void netherColumnResolvesShelteredGroundBelowRoof()
+	{
+		IntPredicate support = y -> y == 100 || y >= 122;
+		IntPredicate open = y -> y > 100 && y < 122;
+
+		assertEquals(Integer.valueOf(101), RtpSampler.descendingSurfaceFeetY(121, 1, support, open));
+	}
+
+	@Test
+	public void lavaSurfacesAreNeverSelected()
+	{
+		IntPredicate support = y -> y == 30;
+		IntPredicate open = y -> y > 40 && y < 122;
+
+		assertNull(RtpSampler.descendingSurfaceFeetY(121, 1, support, open));
+	}
+
+	@Test
+	public void openColumnWithoutGroundResolvesNothing()
+	{
+		IntPredicate support = y -> false;
+		IntPredicate open = y -> true;
+
+		assertNull(RtpSampler.descendingSurfaceFeetY(121, 1, support, open));
+	}
+
+	@Test
+	public void groundAboveTheProbeCeilingIsIgnored()
+	{
+		IntPredicate support = y -> y == 124;
+		IntPredicate open = y -> y > 124;
+
+		assertNull(RtpSampler.descendingSurfaceFeetY(121, 1, support, open));
+	}
+
+	@Test
+	public void headroomMustBeTwoOpenBlocks()
+	{
+		IntPredicate support = y -> y == 100 || y == 102;
+		IntPredicate open = y -> y == 101 || y > 102 && y < 122;
+
+		assertEquals(Integer.valueOf(103), RtpSampler.descendingSurfaceFeetY(121, 1, support, open));
+	}
+
+	@Test
+	public void probeRespectsTheLowerBound()
+	{
+		IntPredicate support = y -> y == 4;
+		IntPredicate open = y -> y > 4;
+
+		assertNull(RtpSampler.descendingSurfaceFeetY(121, 10, support, open));
+	}
+}

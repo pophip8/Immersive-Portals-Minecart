@@ -1,0 +1,1576 @@
+# Wormholes — zh_CN
+#
+# === 编辑文件 ===
+# plugins/Wormholes/languages/zh_CN.toml
+# 可以直接编辑此文件。本地修改会保留；缺失、空白或无效的条目先使用备用语言，最后使用英语。
+# /wormholes language server edit zh_CN
+#
+# === 前缀 ===
+# 消息前缀位于各自模板中，请逐条编辑。{prefix} 是传送门导入代码的开头。
+#
+# === 格式 ===
+# 颜色代码：&0-&f；格式代码：&k-&r（&l = 粗体，&r = 重置）。请保留变量名称，并仅在对应消息中使用。
+#
+# === 变量 ===
+# 请勿更改变量名，仅使用各消息中原有的变量。
+#   {access}  传送门访问策略
+#   {address}  网络对端地址
+#   {after}  编辑后的消息值
+#   {allocation}  口袋空间分配
+#  {amount}  货币传送费用
+#   {argument}  意外的命令参数
+#   {before}  编辑前的消息值
+#   {biome}  生物群系标识符
+#   {blacklisted}  被阻止的玩家
+#   {block}  所选方块材质
+#   {blocks}  重建影响的已放置方块数量
+#   {cancel}  取消聊天输入的词语
+#   {cells}  开口中的开放格数
+#   {code}  服务器或传送门邀请码
+#   {color}  所选显示颜色
+#   {command}  命令路径
+#   {containers}  重建影响的非空容器数量
+#   {cost}  传送门创建或传送费用
+#   {count}  传送门、目的地或消息数量
+#   {degrees}  图像旋转角度
+#   {depth}  投影深度
+#   {description}  消息说明
+#   {destination}  传送目的地
+#   {detail}  其他诊断详情
+#   {diagnostic}  诊断消息
+#   {direction}  传送或朝向方向
+#   {door}  口袋空间出口门
+#   {duration}  玩家专属更新间隔
+#   {endpoint}  虫洞端点标识符
+#   {entities}  受影响实体数量或实体更新间隔（刻）
+#   {entity}  实体更新间隔（刻）
+#   {error}  上次操作的错误
+#   {facing}  传送门朝向
+#   {failed}  失败的操作数量
+#   {fallback}  备用传送结果
+#   {fingerprint}  公钥指纹
+#   {free}  空闲随机目的地槽位数量
+#   {grace}  投影宽限时间（秒）
+#   {group}  语言编辑器类别
+#   {id}  对象标识符
+#   {incoming}  入站传送策略
+#   {item}  传送所需物品
+#   {key}  消息或配置键
+#   {kind}  门访问类型
+#   {label}  显示标签
+#   {large_step}  按住 Shift 点击时的调整量
+#   {line}  消息内的行号
+#   {locale}  语言代码
+#   {material}  口袋空间墙壁材质
+#   {maximum}  允许的最大值
+#   {message}  反馈或诊断消息
+#   {minimum}  允许的最小值
+#   {mode}  所选操作或显示模式
+#   {name}  传送门或玩家名称
+#   {next}  下一个可用选项
+#   {node}  网络节点标识符
+#   {none}  未连接目的地的标签
+#   {other}  已连接端点标识符
+#   {outgoing}  出站传送策略
+#   {owner}  传送门所有者
+#   {page}  当前页码
+#   {pages}  总页数
+#   {parameter}  命令参数名称
+#   {path}  文件或目录路径
+#   {personal}  个人语言代码
+#   {plugin}  插件名称
+#   {portal}  传送门名称或标识符
+#   {prefix}  传送门导入代码的开头
+#   {previous}  之前的口袋空间大小（方块）
+#   {quality}  投影流质量
+#   {quantity}  所需物品数量
+#   {range}  传送门激活范围（方块）
+#   {readiness}  随机目的地就绪状态
+#   {reason}  错误或决定的原因
+#   {receive}  投影接收状态
+#   {refresh}  投影刷新间隔（刻）
+#   {reserved}  已预留随机目的地槽位数量
+#   {resized}  已重建口袋空间数量
+#   {rotation}  投影旋转
+#   {route}  尝试的传送路线
+#   {rtt}  网络往返延迟
+#   {seconds}  时间（秒）
+#   {section}  语言编辑器分区
+#   {send}  投影发送状态
+#   {server}  服务器名称或标识符
+#   {shape}  传送门开口形状
+#   {size}  口袋空间大小（方块）
+#   {skin}  所选传送门皮肤
+#   {skipped}  已跳过操作数量
+#   {space}  口袋空间标识符
+#   {state}  当前访问、连接或网络状态
+#   {step}  点击时的调整量
+#   {style}  显示样式
+#   {target}  应用语言选择的插件
+#   {type}  对象或参数类型
+#   {up}  投影顶部方向
+#   {value}  当前或所选值
+#   {variables}  消息允许的占位符
+#   {whitelisted}  允许的玩家
+#   {world}  世界名称
+#   {x}  X 坐标
+#   {y}  Y 坐标
+#   {z}  Z 坐标
+
+[language.editor]
+title = "{plugin} › {section}"
+loading = "正在加载 {locale} 的消息..."
+
+[language.editor.category]
+message-count = "&7{count} 条消息&r"
+open = "&8点击打开此分类。&r"
+
+[language.editor.error]
+no-permission = "你没有权限编辑 {plugin} 的语言。"
+unable-to-edit = "无法编辑：{reason}"
+
+[language.editor.input]
+expired = "语言编辑器的输入时间已到期。"
+too-long = "输入最多可包含 {maximum} 个字符。"
+unable-to-save = "无法保存：{reason}"
+
+[language.editor.locale]
+open = "&8点击打开此语言。&r"
+
+[language.editor.message]
+current-value = "&7当前值:&r"
+edit-chat = "&7点击在聊天中编辑。&r"
+edit-lines = "&7点击逐行编辑。&r"
+edit-plural = "&7点击编辑复数形式。&r"
+variables = "&8{variables}&r"
+
+[language.editor.navigation]
+back = "&e返回&r"
+close = "&c关闭&r"
+next-page = "&e下一页&r"
+previous-page = "&e上一页&r"
+
+[language.editor.part]
+line = "第 {line} 行"
+
+[language.editor.prompt]
+current = "当前值： {value}"
+guidance = "使用 \\n 表示换行，\\\\ 表示反斜杠，或输入 cancel 返回。"
+search = "搜索消息键或内容。输入 cancel 返回。"
+value = "请在聊天中输入 {key} 的新值。"
+variables = "变量: {variables}"
+
+[language.editor.saved]
+change = "{key}：已将“{before}”改为“{after}”。"
+summary = "已保存 {locale}。语言选择保持不变。"
+
+[language.editor.search]
+clear = "清除搜索"
+messages = "搜索消息"
+messages-lore = "点击搜索所有消息。"
+
+[language.editor.section]
+group-title = "{locale} / {group}"
+languages = "语言"
+search = "搜索"
+search-title = "{locale} / 搜索"
+
+[language.editor.value]
+empty = "(空)"
+none = "无"
+
+[language.error]
+editor-player-only = "请在游戏中打开语言编辑器。"
+no-providers = "没有可用的 Volmit 语言提供程序。"
+numeric-page = "请输入数字页码。"
+personal-permission = "你没有权限选择个人语言。"
+personal-player-only = "玩家必须在游戏中选择个人语言。"
+plugin-personal-permission = "你没有权限为 {plugin} 选择个人语言。"
+plugin-server-permission = "你没有权限更改 {plugin} 的服务器语言。"
+server-locale-required = "请选择 en_US 等语言代码作为服务器默认语言。"
+stopping = "插件停止期间无法选择语言。"
+unavailable-for-all = "语言 {locale} 并非适用于所有选中的插件。"
+
+[language.menu]
+all-volmit-plugins = "所有 Volmit 插件"
+command = "命令: {command}"
+current = "当前：{locale}"
+current_with_personal = "当前：{locale}（你的：{personal}）"
+edit_description = "打开各语言的消息编辑器。"
+edit_messages = "编辑语言消息"
+no_controls = "你无权使用语言设置。"
+remove_personal_description = "移除你的个人语言选择。"
+reset_description = "使用服务器默认语言。"
+reset_your_language = "重置你的语言"
+select_description = "点击以选择此语言。"
+selected = "选中"
+server_default = "服务器默认语言"
+server_description = "更改服务器默认语言。"
+use_server_default = "使用服务器默认语言"
+your_description = "仅更改你看到的消息。"
+your_language = "你的语言"
+
+[language.selection]
+english-fallback = "{plugin}：{locale} 不可用；将使用英语（en_US）。"
+personal-selected = "{plugin}：你的语言现在是 {locale}。"
+preparing = "正在为 {target} 准备语言 {locale}..."
+save-failed = "{plugin}：无法保存语言选择；请检查服务器控制台。"
+server-default-selected = "{plugin}：你的语言现在跟随服务器默认语言。"
+server-selected = "{plugin}：服务器语言现在是 {locale}。"
+
+[language.usage]
+editor = "用法: /{command} language server edit [locale]"
+selection = "用法: /{command} language self [locale|reset] or server [locale]"
+volmit-selection = "用法: /volmit plugins languages [locale]"
+
+[command]
+unknown = "未知命令，请使用 /wormholes 查看帮助。"
+public_help = ["&8[&6Wormholes&8] &7传送门帮助：&f/wormholes info", "&8[&6Wormholes&8] &7对传送门使用传送门法杖，可打开目的地、视图、通行和访问控制。"]
+info = ["&8[&6Wormholes&8] &7&l如何建造虫洞&r", "&81. &7从服务器或管理员处获得传送门法杖和传送门符文。", "&82. &7在同一平面上将符文摆成任意相连形状。", "&7   任意相连形状都可以：矩形、直线 (3x1)、单个方块、L 形和十字形。", "&7   符文必须平整地位于同一面与坐标轴对齐的墙、地板或天花板上。", "&83. &7手持传送门法杖，&f左键点击任意符文方块&7以构建传送门。", "&84. &7在其他位置建造第二个传送门(距离和世界不限)。", "&85. &7手持法杖点击已开启的传送门，打开主菜单。", "&7   选择&f目的地&7并选中另一个传送门，然后在另一端重复此操作。", "&7   方向和访问控制分别位于各自的简洁菜单中。", "&86. &7站在任一传送门 {range} 个方块内，目的地世界会投影在框架中；走入框架即可传送。", "&7管理员可使用 &f/wormholes wand 创建物品"]
+
+[command.debug]
+enabled = "调试日志已启用。"
+disabled = "调试日志已禁用。"
+
+[command.help]
+version = "显示已安装的插件版本"
+debug = "Wormholes诊断工具"
+debug_dump = "创建诊断报告并选择是否上传"
+debug_dump_upload = "将报告上传到 mclo.gs"
+language = "选择你的语言或服务器默认语言"
+root = "Wormholes 命令根节点"
+wand = "获得传送门法杖和一个虫洞符文"
+"wand.rune" = "同时给予虫洞符文（rune=false 只给法杖）"
+door = "给予一个生存模式可用的维度门物品"
+"door.type" = "pair | personal | public | pair_trapdoor | personal_trapdoor | public_trapdoor"
+debug_toggle = "切换详细控制台日志和每秒遥测"
+stats = "显示实时统计快照文件路径；可用 now=true 强制刷新"
+"stats.now" = "同步强制重建快照"
+info = "显示传送门建造说明"
+admin = "Wormholes 破坏性维护命令"
+"admin.delete_portals" = "删除所有本地传送门及已保存的传送门链接"
+"admin.delete_everything" = "重置 Wormholes 数据、配置、信任、身份和网络状态"
+"admin.freeze" = "将所有传送门投影原地冻结指定秒数 (seconds=0 恢复)"
+"admin.freeze.seconds" = "保持冻结画面的时长 (5-300, 0 立即恢复)"
+"admin.flush" = "将每个观察者的投影方块恢复为真实状态并重建"
+network = "跨服务器虫洞网络"
+"network.import" = "从其他服务器导入传送门代码(保存内部路由；通过网关的链接菜单进行连接)"
+"network.import.code" = "其他服务器通过导出按钮生成的传送门代码"
+"network.status" = "显示对等服务器连接状态"
+"network.doctor" = "说明网络对等服务器无法连接的原因"
+server = "跨服务器传送：连接、列出并交换已链接的服务器"
+"server.connect" = "将自己传送到已链接的服务器(简写：/wh server \\<name>)"
+"server.connect.name" = "已链接的服务器名称(见 /wh server list)"
+"server.export" = "将本服务器导出为其他服务器可导入的代码"
+"server.import" = "导入其他服务器导出的服务器或传送门代码"
+"server.import.code" = "来自其他服务器导出的代码"
+"server.list" = "列出已链接的服务器及其连接状态"
+"server.remove" = "忘记一个已链接的服务器(删除其路由和受信任的密钥)"
+"server.remove.name" = "要忘记的已链接服务器名称"
+pocket = "查看和重塑口袋维度"
+"pocket.info" = "显示你所在口袋的大小、材料和边界"
+"pocket.resize" = "以新的大小或材料重建你所在的口袋"
+"pocket.resize.size" = "房间新的边长（方块数），填 0 保持当前大小"
+"pocket.resize.material" = "墙壁、地板和天花板的新方块，或填 keep"
+"pocket.resize.door" = "出口门的新方块，或填 keep"
+"pocket.resize.confirm" = "当改动会破坏或移动任何东西时必须填写"
+"pocket.resizeall" = "以新的大小或材料重建所有现有口袋"
+
+[command.error]
+no_permission = "&8[&6Wormholes&8] &c你没有权限。"
+no_permission_use = "&8[&6Wormholes&8] &c你没有权限使用该命令。"
+only_players = "&8[&6Wormholes&8] &c只有玩家可以接收物品。"
+
+[command.wand]
+granted_wand = "&8[&6Wormholes&8] &a已给予传送门法杖。"
+granted_starter = ["&8[&6Wormholes&8] &a已给予传送门法杖和 1 枚虫洞符文。", "&8[&6Wormholes&8] &7搭建两个虫洞符文形状(同一平面上的任意相连形状)，将它们链接，并站在 {range} 个方块内查看投影。", "&8[&6Wormholes&8] &7运行 &f/wormholes info&7 查看完整分步说明。"]
+
+[command.door]
+unavailable = "&8[&6Wormholes&8] &c维度门当前不可用。"
+unknown_type = "&8[&6Wormholes&8] &c未知的门类型。请使用 pair、personal 或 public, pair_trapdoor, personal_trapdoor, public_trapdoor。"
+empty_type = "门类型不能为空"
+granted = "&8[&6Wormholes&8] &a已给予 &f{type}&a 类型的维度门物品。"
+
+[command.stats]
+unavailable = "&8[&6Wormholes&8] &c统计快照写入器不可用。"
+refreshed = "&8[&6Wormholes&8] &a快照已刷新。"
+path = ["&8[&6Wormholes&8] &7快照文件：&f{path}", "&8[&6Wormholes&8] &8持续查看此文件可共享实时网络与视图状态。每个周期都会原地覆盖该文件。"]
+
+[command.admin]
+delete_failed = "&8[&6Wormholes&8] &c无法删除所有传送门。请在控制台查看完整堆栈跟踪。"
+delete_schedule_failed = "&8[&6Wormholes&8] &c无法调度传送门重置。"
+reset_failed = "&8[&6Wormholes&8] &c无法重置 Wormholes。请在控制台查看完整堆栈跟踪。"
+reset_schedule_failed = "&8[&6Wormholes&8] &c无法调度 Wormholes 重置。"
+projection_frozen = "&8[&6Wormholes&8] &a已将所有传送门投影原地冻结 &f{seconds}&a 秒。它们会自动恢复。"
+projection_resumed = "&8[&6Wormholes&8] &a已恢复传送门投影。"
+projection_failed = "&8[&6Wormholes&8] &c无法更新传送门投影。请查看控制台获取完整堆栈跟踪。"
+projection_schedule_failed = "&8[&6Wormholes&8] &c无法安排投影更新。"
+
+[command.admin.deleted_portals]
+one = "&8[&6Wormholes&8] &a已删除 &f{count}&a 个传送门，并清除本地传送门链接。"
+other = "&8[&6Wormholes&8] &a已删除 &f{count}&a 个传送门，并清除本地传送门链接。"
+
+[command.admin.reset_everything]
+one = "&8[&6Wormholes&8] &aWormholes 已重置为默认状态。删除了 &f{count}&a 个传送门，关闭了网络连接，并重新生成了默认配置文件。"
+other = "&8[&6Wormholes&8] &aWormholes 已重置为默认状态。删除了 &f{count}&a 个传送门，关闭了网络连接，并重新生成了默认配置文件。"
+
+[command.admin.projection_flushed]
+one = "&8[&6Wormholes&8] &a已刷新 &f{count}&a 个投影观察者；客户端正在从真实状态重建。"
+other = "&8[&6Wormholes&8] &a已刷新 &f{count}&a 个投影观察者；客户端正在从真实状态重建。"
+
+[command.pocket]
+not_inside = "&8[&6Wormholes&8] &c请站在口袋维度内再执行此命令。"
+invalid_size = "&8[&6Wormholes&8] &c口袋大小必须在 {minimum} 到 {maximum} 个方块之间。"
+invalid_shell_material = "&8[&6Wormholes&8] &c{material} 不能作为口袋墙壁。请使用不会掉落的固体方块。"
+invalid_door_material = "&8[&6Wormholes&8] &c{material} 不能作为口袋出口门。请使用可以手动打开的门；铁门会被拒绝。"
+unchanged = "&8[&6Wormholes&8] &e该口袋已经是这个大小和这些材料。"
+containers_not_empty = "&8[&6Wormholes&8] &c口袋尺寸调整已停止：&f{containers}&c 个非空容器会被摧毁。请清空后重试；&fconfirm=true&c 无法绕过此安全检查。"
+resized = "&8[&6Wormholes&8] &a口袋已重建为 &f{size}&a 个方块（原为 &f{previous}&a），墙壁 &f{material}&a，出口门 &f{door}。"
+failed = "&8[&6Wormholes&8] &c无法重建该口袋。请查看控制台。"
+world_unavailable = "&8[&6Wormholes&8] &c口袋维度尚未加载。"
+does_not_fit = "&8[&6Wormholes&8] &c{size} 个方块的房间超出了口袋维度的建筑高度。"
+bulk_started = "&8[&6Wormholes&8] &7正在重建 &f{count}&7 个口袋。"
+bulk_finished = "&8[&6Wormholes&8] &a已重建 &f{resized}&a，跳过 &f{skipped}&a，失败 &f{failed}。"
+info = ["&8[&6Wormholes&8] &7口袋 &f{space}", "&8[&6Wormholes&8] &7大小 &f{size}&7 个方块，墙壁 &f{material}&7，出口门 &f{door}", "&8[&6Wormholes&8] &7边界 &f{minimum}&7 到 &f{maximum}"]
+confirm_required = ["&8[&6Wormholes&8] &c重建为 {size} 个方块会摧毁 &f{blocks}&c 个已放置的方块，并移动 &f{entities}&c 个实体。", "&8[&6Wormholes&8] &7新墙外的方块会被摧毁；需要移动的实体会被送到入口。", "&8[&6Wormholes&8] &7加上 &fconfirm=true&7 重新执行同一命令以继续。"]
+
+[portal]
+deleted = "&c已删除 {portal}"
+
+[portal.travel]
+cost_insufficient = "&c需要 {quantity} 个 {item} 才能使用此传送门。"
+cost_vault_insufficient = "&c需要 {amount} 才能使用此传送门。"
+cost_vault_unavailable = "&c此传送门的经济费用不可用。"
+cost_transaction_failed = "&c传送门无法处理你的通行费用。"
+transfer_holding = "&6正在连接到目标服务器..."
+transfer_interrupted = "&c传送门传输中断：你离开了传送门。"
+transfer_source_unavailable = "&c传送门传输中断：源传送门已不可用。"
+cooldown = "&6传送门冷却中"
+access_denied = "&c无权使用此传送门"
+destination_unavailable = "&c传送门目的地不可用"
+arrival_denied = "&c目标传送门拒绝了你的到达。"
+arrival_returned = "&c目标传送门拒绝了你的到达；正在将你送回 {server}"
+arrival_failed = "&c无法放置传送门抵达点；你仍位于目的地出生点"
+transfer_cooldown = "&6跨服务器传送门冷却中：{seconds}s"
+destination_unreachable = "&c无法连接目的地服务器"
+destination_unreachable_detail = "&c无法连接目的地服务器：{reason}"
+transfer_blocked = "&c传送门传送被阻止：{reason}"
+transfer_blocked_retry = "&c传送门传送被阻止：{reason}({seconds}s 后重试)"
+
+[portal.prompt]
+cost_item = "&b将作为费用的物品拿在主手，然后按丢弃键。该物品不会离开你的物品栏。"
+cost_vault = "&b输入每次穿越的金额（或输入 '{cancel}'）："
+invite = "&b请将传送门邀请粘贴到聊天中(或输入 '{cancel}')："
+block_state = "&b请输入此传送门网络视图边缘使用的方块状态，或输入 '{cancel}'："
+name = "&b请在聊天中输入新的传送门名称(或输入 '{cancel}')："
+direction = ["&8[&6Wormholes&8] &7看向一个方向，然后左键点击以应用。", "&8[&6Wormholes&8] &7Shift + 左键点击以取消。"]
+
+[portal.notice]
+cost_item_set = "现在通行需要 {item}。"
+cost_item_invalid = "该物品无法保存为通行费用。"
+cost_cleared = "已清除通行费用。"
+cost_quantity_changed = "通行费用数量：{quantity}"
+cost_vault_changed = "穿越费用：{amount}"
+cost_vault_invalid = "请输入不超过 {maximum} 的正数货币金额。"
+cost_vault_unavailable = "选择此费用前必须有可用的经济服务。"
+dimensional_link_managed = "此维度传送门会保留自动生成的链接。"
+not_rtp = "此传送门已不再使用随机传送模式。"
+region_unavailable = "传送门区域不可用；请重试。"
+travel_managed = "维度传送门的通行方向由系统自动管理。"
+travel_mirror_locked = "镜像模式始终禁止通行。"
+travel_changed = "通行：{mode}"
+stream_quality_changed = "数据流质量：{quality}"
+network_value_changed = "{label} {value}"
+fallback_set = "备用方块已设为 {block}"
+fallback_reset = "备用方块已重置为 {block}"
+managed_mode = "受管理的维度传送门会保持传送门模式。"
+projection_receiver_inactive = "末地抵达端会保持不显示投影。"
+projection_changed = "投影：{mode}"
+settings_sync_changed = "设置同步：{state}"
+access_changed = "访问模式：{mode}"
+mirror_select_first = "旋转图像前请先选择镜像模式。"
+mirror_rotation_changed = "镜像旋转：{degrees} 度"
+rtp_cannot_link = "随机传送门不会链接到固定目的地。"
+
+[portal.label]
+activation_global = "全局 ({range})"
+public_look_label = "注视时的公开标签"
+
+[portal.label.cost]
+free = "免费"
+vanilla = "原版物品"
+vault = "经济"
+
+[portal.label.ambient]
+red = "红色"
+green = "绿色"
+blue = "蓝色"
+
+[portal.label.ambient_style]
+sparks = "火花"
+outline = "轮廓"
+corners = "角落"
+off = "关闭"
+
+[portal.label.skin]
+none = "无"
+
+[portal.label.travel]
+both = "双向"
+outbound = "仅出站"
+inbound = "仅入站"
+locked = "已锁定"
+arrival = "仅到达"
+departure = "仅出发"
+dimensional_both = "链接的两端都会保持启用。"
+dimensional_return_disabled = "返回路径保持禁用。"
+
+[portal.label.quality]
+standard = "标准"
+performance = "性能"
+balanced = "均衡"
+cinematic = "电影级"
+custom = "自定义"
+
+[portal.label.mode]
+portal = "传送门"
+wormhole = "虫洞"
+gateway = "网关"
+rtp = "RTP"
+mirror = "镜像"
+
+[portal.label.direction]
+up = "上"
+down = "下"
+north = "北"
+south = "南"
+east = "东"
+west = "西"
+
+[portal.label.allocation]
+shared = "共享"
+per_player = "每位玩家"
+
+[portal.label.permission]
+whitelist = "白名单"
+blacklist = "黑名单"
+
+[portal.label.network]
+direct = "直连"
+sideband = "旁路"
+reconnecting = "正在重新连接"
+
+[portal.network.label]
+render_mode = "渲染模式"
+ambient_style = "环境粒子"
+ambient_color = "环境颜色"
+surface_skin = "表面皮肤"
+capture_radius = "捕获半径"
+full_refresh = "完整刷新"
+entity_update = "实体更新"
+view_grace = "视图保持时间"
+blackout = "背景遮蔽"
+blackout_color = "遮蔽颜色"
+activation_range = "激活范围"
+
+[portal.network.description]
+capture_radius = "围绕目的地传送门传输的方块范围。"
+full_refresh = "两次完整方块刷新之间的 tick 数。"
+entity_update = "两次实体更新之间的 tick 数。"
+view_grace = "移开视线后继续保持数据流的秒数。"
+
+[portal.form]
+rtp_unsupported = "&c无法使用符文构建随机传送门。"
+forming = "&b正在构建传送门... {type} 符文必须在同一面平整的墙、地板或天花板上相连。"
+must_be_flat = "&c传送门必须平整地位于同一面墙、地板或天花板上。"
+interrupted = "&c传送门构建被中断；已返还预留的符文。"
+rune_placed = "&b已放置符文。请在同一平面上搭建任意相连形状，然后手持传送门法杖左键点击任意符文。"
+opened = "&a传送门已开启。手持法杖点击传送门即可配置。"
+
+[portal.edit]
+denied = "&c只有传送门所有者或管理员可以编辑此传送门。"
+
+[portal.menu]
+destination = ["&6&l目的地&r", "&7选择要链接的传送门。", "&7当前链接：{destination}", "", "&8点击打开目的地选择器。"]
+"destination.sort_smart" = "智能"
+"destination.sort_name" = "名称"
+"destination.sort_world" = "世界"
+"destination.sort_distance" = "距离"
+"destination.local" = ["&6{portal}", "&7位于 {world} 的 {x}, {y}, {z}，朝向 {direction}"]
+"destination.remote" = ["&6{portal}", "&7服务器：&f{server}", "&7位于 {world} 的 {x}, {y}, {z}，朝向 {direction}", "&b{state}"]
+"destination.sort" = ["&e&l排序：&f&l{mode}&r", "&7更改目的地排序方式。", "&e左键点击"]
+"destination.previous_page" = ["&e&l上一页&r", "&7显示上一页目的地。", "&e左键点击"]
+"destination.next_page" = ["&e&l下一页&r", "&7显示下一页目的地。", "&e左键点击"]
+"destination.page" = ["&b&l第 {page}/{pages} 页&r", "&7{count} 个目的地"]
+"destination.empty" = ["&7没有可链接的目的地。"]
+render_mode = ["&b&l渲染模式 &f&l{mode}&r", "&7此传送门投影目标区域的多少体积。", "", "&7模式: &f{mode}", "", "&8PanOptic 渲染完整的目标区域体积。", "&8Venticular 隐藏可见不透明表面后方的几何体。", "", "&8左键: 切换模式。"]
+ambient_particles = ["&b&l环境粒子&r", "&7在此传送门周围漂浮的装饰性尘埃。", "", "&7样式：&f{style} &8({color})", "", "&8左键：切换样式。", "&8右键：选择颜色。"]
+aperture_shape = ["&b&l开口形状&r", "&7框架内开口的轮廓。", "", "&7形状：&f{shape}", "&7开放格数：&f{cells}", "", "&8左键：下一个形状。", "&8右键：旋转 45 度。", "&8Shift + 右键：重置为 full。"]
+"aperture_shape.label" = "开口形状"
+"aperture_shape.too_small" = "&c{shape} 在此框架中没有留下任何开放格。"
+"aperture_shape.invalid" = "&8[&6Wormholes&8] &c无法读取形状：{reason}"
+"aperture_shape.current" = "&8[&6Wormholes&8] &f{portal}&7 的开口形状：&f{shape}&7（{cells} 个开放格）"
+"aperture_shape.set" = "&8[&6Wormholes&8] &f{portal}&a 的开口形状已设为 &f{shape}&a（{cells} 个开放格）。"
+surface_skin = ["&b&l表面皮肤&r", "&7用渲染的方块或流体面板覆盖传送门开口。", "", "&7皮肤：&f{skin}", "", "&8左键：清除皮肤。", "&8右键：打开皮肤选项。"]
+"surface_skin.placard" = ["&6&l表面皮肤&r", "&7手持方块或桶右键点击传送门以应用皮肤。", "", "&7皮肤：&f{skin}"]
+"surface_skin.glass" = ["&b&l玻璃皮肤&r", "&7覆盖开口的透明玻璃窗。", "", "&8点击以应用玻璃。"]
+"surface_skin.clear" = ["&c&l清除皮肤&r", "&7移除皮肤并恢复投影。", "", "&8点击以移除皮肤。"]
+gateway_destination = ["&6&l配对 & 目的地&r", "&7与其他服务器配对，或选择一个网关。", "&7当前链接：{destination}", "", "&8点击打开配对中心。"]
+rtp_destination = ["&6&l随机目的地&r", "&7配置此传送门重选目的地的位置和时机。", "&7轮换：&b{rotation}", "", "&8点击打开随机传送设置。"]
+rename = ["&a&l重命名传送门&r", "&7更改链接和菜单中显示的名称。", "&7当前：&f{portal}", "", "&8点击输入新名称。"]
+delete = ["&c&l删除传送门&r", "&7永久删除此传送门。", "", "&c&nShift + 左键点击以确认&r"]
+advanced_settings = ["&3&l高级数据流调节&r", "&7用于诊断和特殊链接的直接控制。", "&7更改任意值会将数据流质量标记为自定义。"]
+back_settings = ["&e&l返回设置&r", "&7返回传送门设置。"]
+extensions = ["&b&l更多设置&r", "&7规则、访问、网络及其他功能设置。", "&e左键点击"]
+stream_quality = ["&b&l数据流质量：{quality}&r", "&7统一控制远程视图范围和更新频率。", "", "&7深度 &b{depth}&7  实体 &b{entities}t", "&7刷新 &b{refresh}t&7  保持 &b{grace}s", "", "&8点击：循环切换质量。", "&8Shift + 点击：高级调节。"]
+orientation = ["&9&l朝向&r", "&7正面方向：&9{facing}", "&7屏幕上方：&6{up}", "", "&8点击设置正面方向、翻面和旋转。"]
+orientation_placard = ["&9&l传送门朝向&r", "&7正面方向：&9{facing}", "&7屏幕上方：&6{up}"]
+network_number = ["&b&l{label} &f&l{value}&r", "&7{description}", "", "&7当前：&b{value}", "", "&8左键点击：+{step}", "&8右键点击：-{step}", "&8Shift + 左键点击：+{large_step}", "&8Shift + 右键点击：-{large_step}"]
+fallback_block = ["&b&l备用方块&r", "&7在数据流深度之外显示的方块。", "", "&7当前：&f{block}", "", "&8左键：输入方块状态。", "&8右键：重置为空气。"]
+blackout = ["&b&l背景遮蔽&r", "&7用实心混凝土封住投影的远端和侧面边界，使本地世界永远不会透出来。", "", "&7当前：&f{state} &8({color})", "", "&8左键：开启/关闭切换。", "&8右键：选择颜色。"]
+activation_range = ["&b&l激活范围 &f&l{value}&r", "&7此传送门开始为附近玩家投影的距离（以方块计）。", "", "&7当前：&b{value}", "", "&8左键点击：+{step}", "&8右键点击：-{step}", "&8Shift + 左键点击：+{large_step}", "&8Shift + 右键点击：-{large_step}", "&8低于 8 将重置为全局。"]
+settings_placard_gateway = ["&b&l传送门设置&r", "&7访问和传送控制。", "&7以及跨服务器视图调节。", "", "&7深度越大 / tick 间隔越短 =", "&7视图越丰富，占用带宽越多。"]
+mode_placard = ["&e&l传送门模式&r", "&7当前：&e{mode}", "", "&7传送门：可链接的基础传送门。", "&7虫洞：带视口的传送门。", "&7网关：跨服务器网关。", "&7RTP：可配置的随机目的地。", "&7镜像：反射本侧画面，禁止通行。"]
+mode_opener = ["&e&l模式&r", "&7{description}", "", "&7当前：&e{mode}", "", "&8点击更改模式。"]
+direction = ["&9&l方向&r", "&7更改传送门正面的朝向。", "", "&7当前朝向：&9{direction}", "", "&8点击后看向一个方向，再左键点击应用。"]
+flip_face = ["&b&l翻转正面&r", "&7反转传送门正面的方向。", "&7屏幕旋转方向保持对齐。", "", "&7当前屏幕上方：&b{up}", "", "&8点击翻转。"]
+rotate_counterclockwise = ["&6&l逆时针旋转&r", "&7将传送门视口旋转 90 度", "&7但不改变正面方向。", "", "&7当前屏幕上方：&6{up}", "", "&8点击旋转。"]
+rotate_clockwise = ["&6&l顺时针旋转&r", "&7将传送门视口旋转 90 度", "&7但不改变正面方向。", "", "&7当前屏幕上方：&6{up}", "", "&8点击旋转。"]
+back = ["&e&l返回&r", "&7返回传送门菜单。"]
+settings_gateway = ["&b&l设置&r", "&7权限、传送控制", "&7和跨服务器视图调节。", "", "&7访问：&6{access}", "&7发送 &b{send}&7  接收 &b{receive}", "&7深度 &b{depth}&7  实体 &b{entity}t", "", "&8点击打开设置。"]
+settings_sync = ["&b&l设置同步 {state}&r", "&7开启后，此传送门的设置", "&7(深度、tick、投影、权限和", "&7传送控制)会同步到所有链接的对等端。", "", "&7当前：&b{state}", "", "&8点击切换。"]
+permission = ["&6&l访问模式 {mode}&r", "&7{description}", "&7权限节点：&f{node}", "", "&7当前：&6{mode}", "", "&8点击切换白名单 / 黑名单。", "&8管理员始终不受限制。"]
+public_look_label = ["&b&l注视时的公开标签：&f&l{state}&r", "&7附近玩家注视此传送门时显示其名称。", "&7关闭时，路线标签仅在使用传送门工具时显示。", "", "&e左键点击切换"]
+
+[portal.menu.gateway]
+server = "&7服务器：&f{server}"
+link = "&7链接：&b{state}"
+choose = ["&6&l选择目的地&r", "&7从已发现的本地和远程网关中选择。", "", "&8点击打开目的地列表。"]
+unpaired = ["&6&l网关配对&r", "&7状态：&c未配对"]
+paired = ["&6&l网关配对&r", "&7目的地：&6{destination}"]
+export = ["&6&l创建邀请&r", "&7为其他服务器创建已签名的网关代码。", "", "&8点击复制新代码。"]
+import = ["&b&l使用邀请&r", "&7粘贴来自其他网关的已签名代码。", "", "&8点击后在聊天中粘贴代码。"]
+
+[portal.menu.mirror]
+rotation = "&7图像旋转：&b{degrees} 度"
+rotate_clockwise = "&8右键点击：顺时针旋转。"
+rotate_counterclockwise = "&8Shift + 右键点击：逆时针旋转。"
+selected = ["&e&l镜像&r", "&7将本地世界反射回来。", "&7透过框架可以看到自己。", "&7镜像模式下无法通行。", "", "&a当前已选择"]
+available = ["&e&l镜像&r", "&7将本地世界反射回来。", "&7透过框架可以看到自己。", "&7镜像模式下无法通行。", "", "&7左键点击以选择"]
+flip = ["&7墙面镜像以 180 度为步长翻转", "&7以保持反射实体方向正确。", "&8右键点击：翻转反射图像。"]
+
+[portal.menu.cost]
+opener = ["&6&l通行费用&r", "&7要求玩家使用此传送门时", "&7支付指定物品或 货币。", "", "&7模式：&f{mode}", "&7费用：&f{cost}", "", "&8点击进行配置。"]
+placard = ["&6&l通行费用&r", "&7玩家必须先付费", "&7才能通过此传送门。", "", "&7模式：&f{mode}", "&7费用：&f{cost}"]
+mode_free = ["&a&l免费&r", "&7无需任何支付。", "", "&8点击将通行设为免费。"]
+mode_vanilla = ["&b&l原版物品&r", "&7消耗一个完全匹配的物品。", "", "&8点击后手持物品，再按丢弃键。"]
+mode_vault = ["&a&l经济&r", "&7通过经济服务扣除货币。", "", "&8点击输入金额。"]
+mode_vault_unavailable = ["&c&l经济不可用&r", "&7需要经济服务。", "", "&8启用经济服务后才能使用此模式。"]
+free_detail = ["&a&l无费用&r", "&7通过此传送门完全免费。"]
+secondary_empty = ["&8&l无附加设置&r"]
+item = ["&b&l{item}&r", "&7通行需要这个完全一致的物品。", "&7用于选择的物品不会被消耗。", "", "&8左键：选择另一个手持物品。", "&8右键：清除费用。"]
+quantity = ["&b&l数量 {quantity}&r", "&7每次通过消耗的", "&7完全匹配物品数量。", "", "&8左键：+1", "&8右键：-1", "&8Shift + 左键：+8", "&8Shift + 右键：-8", "&8最大：{maximum}"]
+vault_amount = ["&a&l{amount}&r", "&7每次通过扣除的货币。", "", "&8左键：输入其他金额。", "&8右键：清除费用。"]
+
+[portal.menu.ambient_color]
+placard = ["&6&l环境颜色&r", "&7环境尘埃粒子的颜色。", "", "&7当前：&f{color}"]
+channel = ["&b&l{label} &f&l{value}&r", "", "&8左键点击：+{step}", "&8右键点击：-{step}", "&8Shift + 左键点击：+{large_step}", "&8Shift + 右键点击：-{large_step}"]
+option = ["&b&l{color}&r", "", "&8点击以选择。"]
+
+[portal.menu.travel]
+managed = ["&6&l通行：{direction}&r", "&7由系统管理的维度传送门方向。", "&7{detail}"]
+mirror = ["&c&l通行：镜像锁定&r", "&7镜像模式仅提供画面。", "&7实体无法通过它进入或离开。"]
+standard = ["&b&l通行：{mode}&r", "&7控制通过此传送门的通行方向。", "", "&7出站：&b{outgoing}&7  入站：&b{incoming}", "", "&8点击循环切换通行方向。"]
+
+[portal.menu.blackout_color]
+placard = ["&6&l遮蔽颜色&r", "&7用于遮蔽外壳的混凝土颜色。", "", "&7当前：&f{color}"]
+option = ["&b&l{color}&r", "", "&8点击以选择。"]
+
+[portal.menu.placard]
+rtp = ["&6&l{portal}&r", "&7类型：&e{type}", "&7朝向：&9{facing}", "&7分配：&b{allocation}", "&7轮换：&b{rotation}", "", "&8管理员不受白名单或黑名单限制。"]
+linked = ["&6&l{portal}&r", "&7类型：&e{type}", "&7朝向：&9{facing}", "&7链接到：&6{destination}", "", "&8管理员不受白名单或黑名单限制。"]
+unlinked = ["&6&l{portal}&r", "&7类型：&e{type}", "&7朝向：&9{facing}", "&7链接到：&c{none}", "", "&8管理员不受白名单或黑名单限制。"]
+
+[portal.menu.projection]
+on = ["&6&l投影开启&r", "&7显示此传送门的实时视图。", "&7可以看到目的地或镜像画面。", "", "&7当前：&b投影开启&r", "", "&8点击切换开启 / 关闭。"]
+off = ["&8&l投影关闭&r", "&7框架保持空白。", "&7不显示目的地视图或镜像。", "", "&7当前：&b投影关闭&r", "", "&8点击切换开启 / 关闭。"]
+
+[portal.menu.mode_option]
+selected = ["&e&l{mode}&r", "&7{description}", "", "&a当前已选择"]
+available = ["&e&l{mode}&r", "&7{description}", "", "&7点击选择"]
+
+[portal.input]
+cancel = "取消"
+
+[portal.rtp]
+editor_title = "RTP: {portal}"
+
+[portal.rtp.notice]
+setting_rejected = "无法应用该设置：{reason}"
+applied = "已应用随机目的地设置。"
+reset_defaults = "随机传送设置已重置为默认值。"
+editor_refreshed = "设置已更改；编辑器已刷新。"
+runtime_unavailable = "随机传送运行时不可用。"
+reroll_failed = "手动重选失败；请查看服务器日志。"
+reroll_preparing = "正在准备新的随机目的地。"
+reroll_unavailable = "路线正在准备或使用时无法重选。"
+pool_rebuilding = "正在重建私人目的地池。"
+pool_failed = "目的地池重建失败；请查看服务器日志。"
+not_ready = "&e传送门仍在稳定其目的地。"
+traversal_failed = "&c传送门无法稳定，请重试。"
+
+[portal.rtp.rotation]
+private = "每位玩家每 {duration} 轮换"
+
+[portal.mode]
+changed = "&a{portal} 的模式已设为 {mode}。"
+
+[portal.mode.description]
+portal = "可链接的基础传送门。"
+wormhole = "带视口投影的可链接传送门。"
+gateway = "用于跨网络链接。"
+rtp = "本地随机传送门。"
+mirror = "反射本地世界并禁止通行。"
+
+[portal.permission.description]
+whitelist = "玩家必须拥有此权限节点才能使用传送门。"
+blacklist = "拥有此权限节点的玩家会被阻止。"
+
+[portal.direction]
+cancelled = "&8[&6Wormholes&8] &7已取消"
+set = "&8[&6Wormholes&8] &7方向已设置"
+
+[portal.setting]
+notification = "&a{portal}: &r{message}"
+
+[portal.link]
+linked = "&a{portal} 已链接到 {destination}。"
+linked_remote = "&a{portal} 已链接到 {server} 上的 {destination}。"
+unlinked = "&e{portal} 已取消与 {destination} 的链接。"
+
+[portal.orientation]
+face_flipped = "&a{portal} 的正面已翻转到 {direction}。"
+rotated_counterclockwise = "&a{portal} 已逆时针旋转。"
+rotated_clockwise = "&a{portal} 已顺时针旋转。"
+direction_changed = "&a{portal} 的方向已更改为 {direction}。"
+
+[director.help]
+no_subcommands = "此页面没有子命令。"
+no_description = "未提供描述"
+command_group = "命令组。点击打开。"
+category = "命令类别"
+no_parameters = "没有参数。点击以预填命令。"
+parameters_hover = "将鼠标悬停在参数上以了解更多。"
+
+[director.help.navigation]
+back = "返回"
+page = "页面"
+
+[director.help.navigation.parent]
+hover = "返回上一级命令组"
+
+[director.help.navigation.previous]
+hover = "上一页"
+
+[director.help.navigation.next]
+hover = "下一页"
+
+[director.help.parameter]
+required = "此参数为必填项。"
+optional = "此参数为可选项。"
+default = "未指定时默认为 \"{value}\"。"
+type = "此参数的类型为 {type}。"
+
+[director.runtime.error]
+invalid_origin = "无法从此来源执行该命令。"
+unknown_parameter = "未知参数：{key}"
+unexpected_argument = "意外参数 \"{argument}\"。可选参数必须指定名称，例如 seed=123"
+unclosed_group = "参数 {key} 缺少闭合的 \"]\""
+conversion_failed = "无法将 \"{value}\" 转换为参数 {parameter} 所需的 {type} 类型"
+default_parse_failed = "无法解析参数 {parameter} 的默认值"
+missing_argument = "缺少参数 \"{parameter}\" ({type})"
+execution_failed = "执行命令 {command} 失败：{reason}"
+
+[network]
+not_initialized = "&8[&6Wormholes&8] &c网络尚未初始化。"
+
+[network.status]
+disabled = "&8[&6Wormholes&8] &7网络已&c禁用&7 (wormholes.toml)。"
+not_running = "&8[&6Wormholes&8] &c网络已启用但未运行。请检查身份存储和网络端口。"
+listening = "&8[&6Wormholes&8] &7当前服务器：&f{server}&7，监听地址：&f{address}"
+outbound_only = "&8[&6Wormholes&8] &7当前服务器：&f{server}&7，仅出站 Boat 模式"
+public_key = "&8[&6Wormholes&8] &8公钥：{fingerprint}"
+no_routes = "&8[&6Wormholes&8] &7尚未链接任何对等路由。"
+peer = "&8[&6Wormholes&8] &f{server}&7 {state} &7{address}{rtt}"
+last_attempt = "&8[&6Wormholes&8] &8  上次尝试：{error}"
+
+[network.doctor]
+clear = "&8[&6Wormholes&8] &a未检测到网络配置问题。"
+header = "&8[&6Wormholes&8] &e网络诊断："
+line = "&8[&6Wormholes&8] &7- {diagnostic}"
+
+[network.code]
+building = "&8正在生成传送门代码..."
+copy = "&6&l[复制传送门代码：{portal}]&r"
+copy_hover = "&7点击复制。将其粘贴到其他服务器：传送门菜单 > 导入，或 /wh server import \\<code>"
+fingerprint = "&8包含当前服务器的地址和公钥指纹 {fingerprint}。"
+too_long = "&e此代码过长，无法粘贴到聊天中；请改在其他服务器上使用 /wh server import \\<code>。"
+invalid = "&c传送门代码无效。代码以 {prefix} 开头；若粘贴到聊天中可能被截断，请尝试 /wh server import \\<code>。旧版插件生成的代码必须重新导出。"
+same_server = "&c该代码来自当前服务器。"
+same_identity = "&c该代码解析为当前服务器身份 ({server})。请让两台服务器以各自的 Wormholes 身份重启，然后从另一台服务器重新导出。"
+linked = "&a已将 &f{portal}&7 -> &f{destination}&a 链接到 &f{server}&a。服务器连接后传送门将开启。"
+route_saved = "&a已保存通往 {server} 的路由，公钥为 {fingerprint}。连接后，'{portal}' 将显示在网关的链接菜单中。"
+check_status = "&8使用 /wh network status 查看连接状态。"
+using_address = "&7此传送门代码使用 {address}；如果公网地址发生变化，签名握手会自动检测并修正地址。"
+
+[server]
+unknown = "&8[&6Wormholes&8] &c未知的服务器 '&f{server}&c'。请先导入其代码，或查看 /wh server list。"
+removed = "&8[&6Wormholes&8] &a已移除服务器 &f{server}&a 及其受信任的密钥。"
+name_empty = "服务器名称不能为空"
+
+[server.code]
+copy = "&6&l[复制服务器代码：{server}]&r"
+copy_hover = "&7点击复制。将其粘贴到其他服务器：/wh server import \\<code>"
+raw = "&7服务器代码：&f{code}"
+saved = "&a已保存服务器 &f{server}&a，公钥为 {fingerprint}。使用 &f/wh server {server}&a 连接。"
+
+[server.connect]
+sending = "&8[&6Wormholes&8] &a正在将你传送到 &f{server}&a..."
+not_ready = "&8[&6Wormholes&8] &c{server} 当前不可达。请检查 /wh network status。"
+failed = "&8[&6Wormholes&8] &c无法将你传送到 {server}。请查看控制台和 /wh network status。"
+only_players = "&8[&6Wormholes&8] &c只有玩家可以连接到其他服务器。"
+
+[server.list]
+header = "&8[&6Wormholes&8] &7已链接的服务器："
+empty = "&8[&6Wormholes&8] &7尚未链接任何服务器。请使用 &f/wh server import \\<code>&7。"
+entry = "&8[&6Wormholes&8] &f{server}&7 {state} &8{address}"
+
+[door.transit]
+shutdown = "维度门在传送完成前已关闭。"
+message = "&8[&6Wormholes&8] &7{message}"
+link_not_placed = "链接的虫洞门尚未放置。"
+link_unavailable = "链接的虫洞门不可用或被阻挡。"
+nested_pocket = "在共享虚空维度内部，口袋门无法再开启另一个口袋维度。"
+pocket_not_ready = "口袋维度尚未准备就绪。"
+pocket_allocation_failed = "无法分配口袋维度。"
+safe_return_not_found = "无法在门的这一侧找到安全返回路线。"
+pocket_prepare_failed = "无法安全地准备口袋维度。"
+return_ticket_save_failed = "无法保存安全返回路线。"
+pocket_entry_unsafe = "口袋维度入口不安全。"
+pocket_entry_chunk_failed = "口袋维度无法加载入口区块。"
+no_return_route = "此口袋维度没有为你保存返回路线。"
+return_unavailable = "你的返回门在对应一侧不可用或被阻挡。"
+return_world_unloaded = "返回世界尚未加载。"
+return_point_obstructed = "已保存的返回点被阻挡。"
+return_chunk_failed = "无法加载已保存的返回区块。"
+closed = "维度传送完成前，维度门已关闭。"
+cycle_consumed = "这扇门的开启周期已被使用。请关闭后重新打开该门。"
+source_missing = "次元门已经不在了。"
+source_close_failed = "来源门无法安全关闭。"
+source_region_unavailable = "来源门所在区域不可用。"
+start_failed = "无法开始维度传送。"
+cancelled = "维度传送已取消。"
+
+[door.craft]
+one_at_a_time = "&8[&6Wormholes&8] &7请逐个合成维度门，以便每扇门获得唯一身份。"
+
+[door.pair]
+unpack_failed = "&8[&6Wormholes&8] &7无法拆分门组；套件未被消耗。"
+unpacked = "&8[&6Wormholes&8] &7缠结门组已拆分为相互连接的虫洞门 A 和 B。"
+missing = "&8[&6Wormholes&8] &7该配对门没有已登记的另一端身份。"
+
+[door.legacy]
+combine = "&8[&6Wormholes&8] &7放置前，请将此旧版维度门与一扇木门合成。"
+
+[door.place]
+already_placed = "&8[&6Wormholes&8] &7该维度门已被放置，或其状态无法保存。"
+
+[door.break]
+exit_anchored = "&8[&6Wormholes&8] &7此维度出口已锚定到该口袋维度。"
+support = "&8[&6Wormholes&8] &7移除支撑方块前，请先破坏维度门。"
+
+[door.disable]
+warning = "&8[&6Wormholes&8] &7维度门即将禁用。请立即通过口袋维度的返回门离开。"
+
+[door.rescue]
+cancelled = "&8[&6Wormholes&8] &7紧急撤离已取消；返回路线已保留。"
+failed = "&8[&6Wormholes&8] &7{route} {fallback} 你将保持受保护状态，生命值为一颗心。"
+
+[door.rescue.reason]
+no_route = "口袋维度没有已保存的返回路线。"
+return_world_unavailable = "已保存的返回世界不可用。"
+return_point_obstructed = "已保存的返回点被阻挡。"
+return_chunk_failed = "无法加载已保存的返回区块。"
+start_failed = "无法开始紧急撤离。"
+
+[door.rescue.fallback]
+no_world = "未加载任何非口袋维度的备用世界。"
+obstructed = "备用出生点被阻挡。"
+chunk_failed = "无法加载备用出生点。"
+schedule_failed = "无法安排备用撤离。"
+
+[door.access]
+unknown_player = "未知 ({id})"
+edit_denied = "&c只有门的所有者或管理员可以编辑此门。"
+unavailable = "&c此维度门没有访问记录。"
+save_failed = "&c无法保存该门的访问设置更改。"
+player_not_found = "&c找不到名为 {name} 的玩家。"
+owner_always = "&7门的所有者始终拥有访问权限。"
+already_listed = "&7{name} 已在此门的名单中。"
+added = "&a已将 {name} 加入此门的名单。"
+removed = "&a已将 {name} 从此门的名单中移除。"
+state_changed = "&a已将 {name} 设为此门的{state}。"
+prompt_player = "&b请输入要加入此门名单的玩家名称(或输入 '{cancel}')："
+denied = "&c此维度门拒绝了你。"
+transit_denied = "你没有此维度门的访问权限。"
+
+[door.access.label]
+neutral = "中立"
+whitelist = "白名单"
+blacklist = "黑名单"
+
+[door.access.kind]
+pair = "纠缠"
+personal = "个人"
+public = "公共"
+return = "出口"
+
+[door.open_state]
+open = "打开"
+closed = "关闭"
+
+[door.menu.access]
+title = "维度门访问：{kind}"
+placard = ["&6&l{kind}维度门&r", "&7所有者：&f{owner}", "&7白名单：&a{whitelisted}", "&7黑名单：&c{blacklisted}", "&7名单玩家：&b{count}", "&8只有所有者和管理员可以编辑此门。"]
+add_player = ["&a&l添加玩家&r", "&7在聊天中输入玩家名称即可加入名单。", "", "&8点击添加玩家。"]
+open_state = ["&b&lOpenState：&f&l{state}", "&7传送门会跟随此方块的物理状态。", "&7激活状态：&f{state}&7。", "", "&8下一状态：{next}。点击切换。"]
+entry = ["&f{name}", "&7状态：&b{state}", "", "&8左键：白名单。右键：黑名单。", "&8中键或 Shift + 左键：移除。"]
+
+[wand.selection]
+corner_a = "&b已设置角点 A。右键点击对角。"
+corner_b = "&b已设置角点 B。左键点击对角。"
+not_flat = "&c选区厚度必须为一个方块。请重新点击一个角点使其变为平面。"
+too_large = "&c选区过大：{count} 个方块(上限 {maximum})。"
+opening = "&b正在开启传送门..."
+open_failed = "&c无法在此处开启传送门。"
+
+[wand.selection.selected]
+one = "&b已选择 {count} 个方块。左键点击玻璃板以开启传送门。"
+other = "&b已选择 {count} 个方块。左键点击玻璃板以开启传送门。"
+
+[label]
+none = "无"
+on = "开启"
+off = "关闭"
+ready = "就绪"
+preparing = "准备中"
+open = "打开"
+closed = "已关闭"
+
+[rtp.routing]
+action_confirm = "打开单独的确认界面。"
+header = ["&b&l轮换 & 目的地池&r", "&7直接选择模式，然后一次应用整批更改。"]
+shared_selected = ["&a&l共享目的地&r", "&7所有人看到并使用相同路线。", "&a已选择"]
+shared_available = ["&b&l共享目的地&r", "&7所有人看到并使用相同路线。", "&e左键点击以选择"]
+private_selected = ["&a&l每位玩家独立目的地&r", "&7每位玩家都会获得一份私人预留。", "&a已选择"]
+private_available = ["&b&l每位玩家独立目的地&r", "&7每位玩家都会获得一份私人预留。", "&e左键点击以选择"]
+static_selected = ["&a&l固定&r", "&7保持同一目的地。", "&a已选择"]
+static_available = ["&b&l固定&r", "&7保持同一目的地。", "&e左键点击以选择"]
+timed_selected = ["&a&l定时轮换&r", "&7经过配置的时长后轮换。", "&a已选择"]
+timed_available = ["&b&l定时轮换&r", "&7经过配置的时长后轮换。", "&e左键点击以选择"]
+trip_selected = ["&a&l每次通行后&r", "&7使用后启用已准备的替代目的地。", "&a已选择"]
+trip_available = ["&b&l每次通行后&r", "&7使用后启用已准备的替代目的地。", "&e左键点击以选择"]
+manual_reroll = ["&e&l手动重选&r", "&7{description}", "&e左键点击"]
+rebuild_pool = ["&e&l重建目的地池&r", "&7{description}", "&e左键点击"]
+
+[rtp.status]
+ready = "就绪"
+warming = "准备中"
+rerolling = "正在重选"
+backoff = "等待重试"
+world_unavailable = "目标世界不可用"
+integration_failed = "访问集成检查失败"
+failed = "失败"
+idle = "空闲"
+retry = "&7重试倒计时：&c{duration}"
+active = "&7使用中：{readiness}"
+standby = "&7待命：{readiness}"
+rotation = "&7草稿轮换方式：&b{rotation}"
+pool = "&7空闲：&b{free}&7  已预留：&b{reserved}"
+target_missing = "&c目标世界尚未加载。"
+access_failed = "&c目的地访问检查失败，已拒绝访问。"
+header = ["&6&l随机目的地状态&r", "&7状态：{state}"]
+
+[rtp.rotation]
+static = "固定"
+timed = "定时轮换"
+trip = "每次通行后轮换"
+
+[rtp.numeric]
+center_x = "中心 X"
+center_z = "中心 Z"
+minimum_radius = "最小半径"
+maximum_radius = "最大半径"
+lower_y = "Y 下限"
+upper_y = "上限 Y"
+preferred_y = "首选 Y 值"
+cycle = "轮换周期"
+private_rotation = "私人目的地轮换时间"
+lease = "空闲保留宽限期"
+release = "私人预留释放延迟"
+link = ["&e&l{label} &f&l{value}&r", "&7打开清晰的减少和增加控制。", "&e左键点击"]
+target_unavailable = ["&b&l目标世界不可用&r", "&7编辑此值前请先加载目标世界。"]
+value = ["&b&l{value}&r", "&7当前草稿值。"]
+adjust = ["&e&l{direction}{step}&r", "&7将草稿调整 {direction}{step}。", "&e左键点击"]
+header = ["&b&l{label}&r", "&7{description}"]
+
+[rtp.numeric.description]
+center = "沿此轴移动自定义中心。"
+minimum_radius = "目的地环形区域的内边缘。"
+maximum_radius = "目的地环形区域的外边缘。"
+y = "合法落脚高度的搜索边界。"
+cycle = "共享目的地定时轮换的间隔。"
+private_rotation = "每位玩家已准备目的地的最长保留时间。"
+lease = "所有人离开后，短暂保持已准备的目的地。"
+release = "释放未使用私人预留前的延迟。"
+
+[rtp.duration]
+hours = "{value}h"
+minutes = "{value}m"
+seconds = "{value}s"
+decimal_seconds = "{value}s"
+
+[rtp.biome]
+any_label = "任意"
+unavailable_label = "不可用"
+header = ["&b&l目标生物群系&r", "&7搜索会优先选择此生物群系，附近找不到时回退到任意安全地点。"]
+any_selected = ["&a&l任意生物群系&r", "&7无生物群系偏好。", "&a已选择"]
+any_available = ["&b&l任意生物群系&r", "&7清除生物群系偏好。", "&e左键点击以选择"]
+current = ["&a&l{biome}&r", "&7{key}", "&a已选择"]
+available = ["&b&l{biome}&r", "&7{key}", "&e左键点击以选择"]
+empty = ["&7目标世界没有可用的生物群系。"]
+previous = ["&e&l上一页生物群系&r", "&7显示上一页。", "&e左键点击"]
+next = ["&e&l下一页生物群系&r", "&7显示下一页。", "&e左键点击"]
+
+[rtp.overview]
+destination = ["&e&l目的地 & 区域&r", "&7世界、中心和半径。", "&e左键点击"]
+landing = ["&e&l落点规则&r", "&7地表和高度设置。", "&e左键点击"]
+routing = ["&e&l轮换 & 目的地池&r", "&7共享方式、轮换和保留时间。", "&e左键点击"]
+effects = ["&e&l效果&r", "&7投影边缘和传送门音效。", "&e左键点击"]
+reset_defaults = ["&e&l重置为默认值&r", "&7立即将此传送门的随机传送设置恢复为默认值。", "&e左键点击"]
+
+[rtp.navigation]
+back_portal = ["&e&l返回传送门&r", "&7返回传送门菜单。", "&e左键点击"]
+overview = ["&e&l概览&r", "&7返回 RTP 概览。", "&e左键点击"]
+back_category = ["&e&l返回&r", "&7返回上一个类别。", "&e左键点击"]
+
+[rtp.destination]
+header = ["&b&l目的地 & 区域&r", "&7所有选项均使用普通左键点击。"]
+world_current = ["&a&l{world}&r", "&7当前目标世界。", "&a已选择"]
+world_available = ["&b&l{world}&r", "&7使用此已加载世界。", "&e左键点击以选择"]
+previous_worlds = ["&e&l上一页世界&r", "&7显示上一页。", "&e左键点击"]
+next_worlds = ["&e&l下一页世界&r", "&7显示下一页。", "&e左键点击"]
+biome_link = ["&e&l目标生物群系 &f&l{value}&r", "&7优先降落在所选生物群系。", "&e左键点击"]
+center_portal_selected = ["&a&l相对传送门的中心&r", "&7以此传送门为环形区域中心。", "&a已选择"]
+center_portal_available = ["&b&l相对传送门的中心&r", "&7以此传送门为环形区域中心。", "&e左键点击以选择"]
+center_custom_selected = ["&a&l自定义中心&r", "&7使用可编辑的 X 和 Z 坐标。", "&a已选择"]
+center_custom_available = ["&b&l自定义中心&r", "&7使用可编辑的 X 和 Z 坐标。", "&e左键点击以选择"]
+reset_center = ["&e&l重置中心 / 目标世界&r", "&7使用来源世界和传送门中心。", "&e左键点击"]
+
+[rtp.landing]
+header = ["&b&l落点规则&r", "&7选择地表或首选高度着陆方式及其安全模式。"]
+surface_selected = ["&a&l地表&r", "&7SAFE 会避开水面和树冠。UNSAFE 使用最上层表面。", "&a已选择"]
+surface_available = ["&b&l地表&r", "&7SAFE 会避开水面和树冠。UNSAFE 使用最上层表面。", "&e左键点击选择"]
+preferred_selected = ["&a&l首选 / 精确高度&r", "&7SAFE 向周围搜索。UNSAFE 使用精确的首选 Y 坐标。", "&a已选择"]
+preferred_available = ["&b&l首选 / 精确高度&r", "&7SAFE 向周围搜索。UNSAFE 使用精确的首选 Y 坐标。", "&e左键点击选择"]
+safe_policy = ["&b&l着陆安全模式：&f&l{mode}&r", "&7SAFE 排除水、危险物、树木、碰撞点及没有支撑的位置。", "&7UNSAFE 直接采用选定的地表或精确的首选 Y 坐标。", "&e左键点击切换"]
+
+[rtp.effects]
+header = ["&b&l效果&r", "&7更改显示效果不会重新生成目的地。"]
+rim_on_selected = ["&a&l就绪边缘开启&r", "&7在传送门边缘显示私人目的地就绪状态。", "&a已选择"]
+rim_on_available = ["&b&l就绪边缘开启&r", "&7在传送门边缘显示私人目的地就绪状态。", "&e左键点击以选择"]
+rim_off_selected = ["&a&l就绪边缘关闭&r", "&7隐藏就绪状态边缘。", "&a已选择"]
+rim_off_available = ["&b&l就绪边缘关闭&r", "&7隐藏就绪状态边缘。", "&e左键点击以选择"]
+sound_on_selected = ["&a&l传送门音效开启&r", "&7播放此 RTP 传送门的效果音和通行音效。", "&a已选择"]
+sound_on_available = ["&b&l传送门音效开启&r", "&7播放此 RTP 传送门的效果音和通行音效。", "&e左键点击以选择"]
+sound_off_selected = ["&a&l传送门音效关闭&r", "&7静音此 RTP 传送门；粒子效果仍会启用。", "&a已选择"]
+sound_off_available = ["&b&l传送门音效关闭&r", "&7静音此 RTP 传送门；粒子效果仍会启用。", "&e左键点击以选择"]
+
+[rtp.confirm]
+reroll = ["&b&l重选共享路线？&r", "&7替代路线准备就绪前，当前投影会保持在线。"]
+rebuild = ["&b&l重建私人目的地池？&r", "&7重建空闲候选目的地时，现有预留保持不变。"]
+confirm = ["&e&l确认&r", "&7立即运行此操作。", "&e左键点击"]
+cancel = ["&e&l取消&r", "&7返回且不更改运行状态。", "&e左键点击"]
+
+[item]
+portal_wand = ["&6&l传送门法杖&r"]
+portal_rune = ["&6&l传送门符文&r"]
+wormhole_rune = ["&6&l虫洞符文&r"]
+
+[item.door]
+entangled_pair = ["&6纠缠门组", "&7包含两扇自动链接的虫洞门。", "&7使用后可拆分出 A 端和 B 端。"]
+paired = ["&6虫洞门 {endpoint}", "&7自动链接到 {other} 端。", "&7打开门并亲自跨过门槛即可通行。"]
+personal = ["&b个人维度门", "&7每位旅行者都会进入自己的持久维度。", "&7同一位旅行者始终会抵达同一地点。"]
+public = ["&6公共维度门", "&7所有旅行者都会进入此门的共享维度。", "&7破坏并移动此门不会改变共享目的地。"]
+return = ["&a维度出口门", "&7让旅行者离开此口袋维度。", "&7此门已绑定到对应口袋维度。"]
+skin = ["&6维度门外观", "&7将维度门与玩家可操作的门合成。"]
+entangled_pair_recipe = ["&6纠缠门组", "&7包含两扇自动链接的虫洞门。"]
+personal_recipe = ["&b个人维度门", "&7每位旅行者都会进入自己的持久维度。"]
+public_recipe = ["&6公共维度门", "&7所有旅行者都会进入此门的共享维度。"]
+entangled_trapdoor_pair = ["&6纠缠活板门组", "&7包含两扇自动链接的虫洞活板门。", "&7使用后可拆分出 A 端和 B 端。"]
+paired_trapdoor = ["&6虫洞活板门 {endpoint}", "&7自动链接到 {other} 端。", "&7打开活板门并从中落下即可通行。"]
+personal_trapdoor = ["&b个人维度活板门", "&7每位旅行者都会进入自己的持久维度。", "&7同一位旅行者始终会抵达同一地点。"]
+public_trapdoor = ["&6公共维度活板门", "&7所有旅行者都会进入此活板门的共享维度。", "&7破坏并移动此活板门不会改变共享目的地。"]
+trapdoor_skin = ["&6维度活板门外观", "&7将维度活板门与可徒手开启的活板门合成。"]
+entangled_trapdoor_pair_recipe = ["&6纠缠活板门组", "&7包含两扇自动链接的虫洞活板门。"]
+personal_trapdoor_recipe = ["&b个人维度活板门", "&7每位旅行者都会进入自己的持久维度。"]
+public_trapdoor_recipe = ["&6公共维度活板门", "&7所有旅行者都会进入此活板门的共享维度。"]
+
+# ==== Headline lane blocks. Each lane adds its tables between its own markers only. ====
+
+# ---- lane:rules (rules.*) ----
+[rules]
+route_card = "{portal} > {destination} | {amount} | {state}"
+
+[rules.menu]
+entry = ["&6规则", "&7谁可以通过、需要多少费用、通过后会发生什么。"]
+cooldown = ["&6冷却：{seconds}s", "&7左右键调整，按住 Shift 以 10 秒为步进。"]
+warmup = ["&6预热：{seconds}s", "&7左右键调整，按住 Shift 以 10 秒为步进。"]
+group = ["&6冷却分组：{value}", "&7点击输入分组名称。"]
+pushback = ["&6推回力度：{value}", "&7左右键调整数值。"]
+sound = ["&6拒绝音量：{value}", "&7左右键调整数值。"]
+charges = ["&6充能：{count}", "&7左右键调整充能池大小。"]
+default_outcome = ["&6默认：{mode}", "&7点击在允许与拒绝之间切换。"]
+rules = ["&6规则（{count}）", "&7点击打开规则列表。"]
+rule = ["&6{name}", "&7{value} &8- Shift 点击删除该规则。"]
+add_rule = ["&a添加规则", "&7点击输入规则 ID。"]
+line = ["&f{value}", "&7Shift 点击删除此行。"]
+add_line = ["&a添加行", "&7点击并输入 kind=PERMISSION;node=group.vip。"]
+templates = ["&6模板", "&7点击应用已保存的模板。"]
+template = ["&f{name}", "&7点击应用此模板。"]
+back = ["&7返回", "&8回到上一页。"]
+page = ["&7第 {page} 页，共 {pages} 页", "&8点击翻页。"]
+
+[rules.route]
+unlisted = "未知"
+free = "免费"
+ready = "就绪"
+cooldown = "{seconds}s"
+
+[rules.denied]
+default = "此传送门拒绝了你。"
+entity_class = "只有 {mode} 才能使用此传送门。"
+key = "你需要 {portal} 的钥匙。"
+time = "{portal} 当前已关闭。"
+cooldown = "请等待 {seconds}s 后再使用 {portal}。"
+charges = "{portal} 已没有充能。"
+cost = "你无法支付 {amount} 来使用 {portal}。"
+
+[rules.notice]
+rule_added = "已添加规则 {name}。"
+rule_removed = "已删除规则 {name}。"
+invalid = "无法应用：{reason}"
+applied = "已应用模板 {name}。"
+
+[rules.prompt]
+group = "&b请输入冷却分组名称（或 \"{cancel}\"）："
+rule_id = "&b请输入新规则的 ID（或 \"{cancel}\"）："
+line = "&b请输入规则行，例如 kind=PERMISSION;node=group.vip（或 \"{cancel}\"）："
+
+[rules.warmup]
+countdown = "保持不动：{seconds}s"
+cancelled = "准备已取消。"
+
+[rules.command]
+exported = "已将 {portal} 的规则写入模板 {name}。"
+imported = "已将模板 {name} 应用到 {portal}。"
+templates = "规则模板：{value}"
+no_templates = "没有已保存的规则模板。"
+template_missing = "没有名为 {name} 的规则模板。"
+template_invalid = "模板 {name} 无效：{reason}"
+portal_missing = "没有名为 {name} 的传送门。"
+portal_ambiguous = "有 {count} 个传送门名为 {name}，请重命名其中一个。"
+not_in_portal = "请站在传送门内，或用 portal 选项指定一个传送门。"
+key_given = "你获得了 {portal} 的钥匙。"
+failed = "无法完成：{reason}"
+
+[rules.command.help]
+rules = "通行规则：模板、钥匙与传送门配置"
+export = "将传送门规则写入模板文件"
+"export.name" = "要写入的模板名称"
+"export.portal" = "传送门名称，留空则使用你所在的传送门"
+import = "将模板应用到你所在的传送门"
+"import.name" = "要读取的模板名称"
+"import.portal" = "传送门名称，留空则使用你所在的传送门"
+apply = "在任意位置将模板应用到指定名称的传送门"
+"apply.name" = "要读取的模板名称"
+"apply.portal" = "要应用模板的传送门名称"
+list = "列出已保存的规则模板"
+key = "给自己一把传送门钥匙"
+"key.portal" = "要制作钥匙的传送门名称"
+"key.uses" = "钥匙允许的通行次数，0 表示无限"
+# ---- end lane:rules ----
+
+# ---- lane:access (access.*) ----
+[access.denied]
+role = "&c你无权使用 {portal}。"
+claim = "&c领地保护阻止了 {portal}。"
+limit = "&c你已拥有 {count} 个传送门；上限为 {maximum}。"
+
+[access.construct]
+denied = "&c你不能在这里建造传送门：{reason}。"
+
+[access.claim]
+reason = "{plugin} 保护着这片地面"
+failure = "无法询问 {plugin}"
+
+[access.transfer]
+done = "&8[&6Wormholes&8] &a{portal} 现在归 {name} 所有。"
+
+[access.key]
+set = "&a{portal} 的权限键现在是 {key}。"
+taken = "&c权限键 {key} 已被占用。"
+invalid = "&c权限键只能使用 a-z、0-9、点、连字符和下划线，最多 64 个字符。"
+
+[access.player]
+not_found = "&c没有名为 {name} 的玩家。"
+
+[access.portal]
+not_found = "&8[&6Wormholes&8] &c没有名为 {portal} 的传送门。"
+ambiguous = "&8[&6Wormholes&8] &c有 {count} 个传送门匹配 {portal}；请使用传送门 ID。"
+
+[access.role]
+changed = "&a{name} 现在在 {portal} 上是 {state}。"
+removed = "&a{name} 在 {portal} 上不再拥有角色。"
+owner_always = "&7所有者始终拥有完全访问权限。"
+
+[access.listed]
+changed = "&a{portal} 现在在公开目录中为 {state}。"
+
+[access.group]
+added = "&a{portal} 现在向 {node} 授予访问权限。"
+cleared = "&a{portal} 不再按组授予访问权限。"
+
+[access.limits]
+report = "&8[&6Wormholes&8] &7{name} 拥有 {count} 个传送门；上限为 {maximum}。"
+unlimited = "&8[&6Wormholes&8] &7{name} 拥有 {count} 个传送门，且没有上限。"
+
+[access.prompt]
+player = "&7在聊天中输入玩家名，或输入 {cancel} 停止。"
+key = "&7在聊天中输入新的权限键，或输入 {cancel} 停止。"
+group = "&7在聊天中输入权限节点，或输入 {cancel} 停止。"
+
+[access.label]
+owner = "所有者"
+co_owner = "共同所有者"
+user = "受信任"
+denied = "已拒绝"
+listed = "已列出"
+unlisted = "已隐藏"
+
+[access.menu]
+entry = ["&b&l访问&r", "&7角色、组和权限键。"]
+placard = ["&b&l访问：{portal}&r", "&7所有者：&f{owner}", "&7角色：&f{count}", "&7权限键：&f{key}"]
+add = ["&a&l添加玩家&r", "&7在聊天中输入名字来授予角色。"]
+role = ["&f&l{name}&r", "&7角色：&f{state}", "&7左键或右键更改角色。", "&7Shift + 左键移除。"]
+groups = ["&e&l允许的组&r", "&7{count} 个权限节点授予访问权限。", "&7左键添加，右键清空。"]
+key = ["&b&l权限键&r", "&7{key}", "&7左键更改。"]
+listed = ["&b&l公开目录&r", "&7{state}", "&7左键切换。"]
+
+[access.command.help]
+access = "传送门访问列表、归属和上限"
+transfer = "将传送门转让给其他玩家"
+"transfer.portal" = "传送门名称或 ID"
+"transfer.player" = "新所有者的名字"
+key = "设置传送门的固定权限键"
+"key.portal" = "传送门名称或 ID"
+"key.key" = "新的权限键"
+limits = "显示玩家拥有和可拥有的传送门数量"
+"limits.player" = "要查看的玩家；默认是你"
+# ---- end lane:access ----
+
+# ---- lane:nexus (nexus.* and atlas.*) ----
+[nexus]
+dialed = "&8[&6Wormholes&8] &a{portal} 已拨号到 {address}：&f{destination}"
+created = "&8[&6Wormholes&8] &a已创建网络 {name}。"
+deleted = "&8[&6Wormholes&8] &a已删除网络 {name}。"
+joined = "&8[&6Wormholes&8] &a{portal} 以地址 {address} 加入 {name}。"
+left = "&8[&6Wormholes&8] &a{portal} 已离开 {name}。"
+
+[nexus.dial]
+unknown = "&8[&6Wormholes&8] &c地址 {address} 上没有传送门。"
+none = "&8[&6Wormholes&8] &c{portal} 不属于任何网络。"
+debounced = "&8[&6Wormholes&8] &7拨号太快，请稍候。"
+managed = "&8[&6Wormholes&8] &c{portal} 是受管传送门，无法拨号。"
+
+[nexus.address]
+taken = "&8[&6Wormholes&8] &c地址 {address} 在 {name} 中已被占用。"
+set = "&8[&6Wormholes&8] &a{portal} 的地址是 {address}。"
+invalid = "&8[&6Wormholes&8] &c地址只能使用这些字符：{value}"
+
+[nexus.network]
+unknown = "&8[&6Wormholes&8] &c没有名为 {name} 的网络。"
+exists = "&8[&6Wormholes&8] &c已存在名为 {name} 的网络。"
+full = "&8[&6Wormholes&8] &c{name} 已有 {count} 个传送门。"
+limit = "&8[&6Wormholes&8] &c你已拥有 {count} 个网络。"
+
+[nexus.portal]
+unknown = "&8[&6Wormholes&8] &c没有名为 {portal} 的传送门。"
+not_member = "&8[&6Wormholes&8] &c{portal} 不是 {name} 的成员。"
+
+[nexus.visibility]
+set = "&8[&6Wormholes&8] &a{name} 现在是 {value}。"
+
+[nexus.hub]
+set = "&8[&6Wormholes&8] &a{portal} 是 {name} 的枢纽。"
+
+[nexus.list]
+empty = "&8[&6Wormholes&8] &7还没有网络。"
+entry = "&7{name} &8- &f{count} 个传送门&7，{value}，所有者 &f{owner}"
+
+[nexus.info]
+header = "&6{name} &8- &f{count} 个传送门&7，{value}，{mode}"
+member = "&e{address} &f{portal} &7位于 {world} &8{state}"
+
+[nexus.doctor]
+header = "&8[&6Wormholes&8] &6链接体检：{count} 项发现。"
+clean = "&8[&6Wormholes&8] &a未发现链接问题。"
+oneway = "&e{portal} -> {destination} 没有回程链接。"
+dangling = "&c{portal} 指向一个已消失的目的地。"
+unloaded = "&e{portal} 指向未加载的世界 {world}。"
+offline = "&c{portal} 指向 {server}，已离线 {count} 天。"
+
+[nexus.redstone]
+set = "&8[&6Wormholes&8] &a{portal} 红石：{value}。"
+
+[nexus.reciprocal]
+paired = "&8[&6Wormholes&8] &a{portal} 与 {destination} 现已双向链接。"
+unpaired = "&8[&6Wormholes&8] &a{portal} 与 {destination} 不再回链。"
+denied = "&8[&6Wormholes&8] &c你无法同时管理 {portal} 和 {destination}。"
+
+[nexus.prompt]
+network_name = "&b在聊天栏输入网络名称（或输入 '{cancel}'）："
+address = "&b在聊天栏输入新地址（或输入 '{cancel}'）："
+
+[nexus.menu]
+entry = ["&b&l网络&r", "&7网络、地址、拨号、目的地规则、红石。", "&7网络：&f{name}", "&7地址：&f{address}", "&e左键"]
+placard = ["&b&l网络：{name}&r", "&7地址：&f{address}", "&7成员：&f{count}"]
+join = ["&a&l加入网络&r", "&7把这个传送门加入网络并分配地址。", "&e左键"]
+leave = ["&c&l离开 {name}&r", "&7把这个传送门及其地址移出网络。", "&e左键"]
+create = ["&a&l创建网络&r", "&7为新网络命名，并把这个传送门放进去。", "&e左键"]
+address = ["&e&l地址：{address}&r", "&7其他传送门拨打这个短码即可到达此处。", "&e左键重新输入。&e右键重新抽取。"]
+visibility = ["&e&l可见性：{value}&r", "&7公开网络人人可见，成员网络仅成员可见，隐藏网络谁也看不到。", "&e左键切换"]
+topology = ["&e&l拓扑：{value}&r", "&7网状可拨任意成员，枢纽经由一个传送门中转，链式与环状拨打相邻成员。", "&e左键切换"]
+reciprocal = ["&e&l回程链接：{state}&r", "&7让目的地始终指回这个传送门。", "&e左键切换"]
+policy = ["&e&l目的地：{mode}&r", "&7{count} 条。按顺序、按权重、按计划、按玩家或回程。", "&e左键切换模式。&e右键清空。"]
+redstone = ["&e&l红石：{value}&r", "&7框旁信号上升沿的动作，以及比较器读取的内容。", "&e左键设置动作。&e右键设置比较器输出。"]
+dial = ["&b&l拨号&r", "&7把这个传送门指向同一网络中的另一个地址。", "&e左键"]
+dial_entry = ["&e{address} &f{portal}", "&7{world}", "&b{state}"]
+link_and_return = ["&d&l链接并回链&r", "&7让 {destination} 也指回 {portal}。", "&e左键"]
+
+[atlas]
+title = "&8图册 &7- &f{count} 个传送门"
+row = "&f{portal} &8| &7{destination} &8| &b{state}"
+empty = "&8[&6Wormholes&8] &7尚未发现任何传送门。"
+disabled = "&8[&6Wormholes&8] &c本服务器已关闭图册。"
+only_players = "&8[&6Wormholes&8] &c只有玩家才有图册。"
+no_permission = "&8[&6Wormholes&8] &c你没有打开图册的权限。"
+usage = ["&8[&6Wormholes&8] &7/atlas &8- &7打开你的传送门列表", "&8[&6Wormholes&8] &7/atlas favorites &8- &7仅显示已置顶的传送门", "&8[&6Wormholes&8] &7/atlas recents &8- &7最近使用过的传送门", "&8[&6Wormholes&8] &7/atlas guide \\<portal> &8- &7显示方位；/atlas guide off 关闭"]
+
+[atlas.favorite]
+added = "&8[&6Wormholes&8] &a已置顶 {portal}。"
+removed = "&8[&6Wormholes&8] &a已取消置顶 {portal}。"
+full = "&8[&6Wormholes&8] &c你已置顶 {count} 个传送门。"
+
+[atlas.guide]
+bearing = "&b{portal} &f{value}"
+set = "&8[&6Wormholes&8] &a正在指引前往 {portal}。"
+cleared = "&8[&6Wormholes&8] &a指引已关闭。"
+unknown = "&8[&6Wormholes&8] &c你的图册里没有名为 {portal} 的传送门。"
+
+[atlas.menu]
+row = ["&6{portal}", "&7{world} &8- &f{destination}", "&b{state}", "", "&e左键拨号。&e右键置顶。&eShift+左键指引。"]
+favorites = ["&d&l仅置顶：{state}&r", "&7只显示你置顶的传送门。", "&e左键"]
+recents = ["&b&l仅最近：{state}&r", "&7只显示你最近使用的传送门。", "&e左键"]
+guide = ["&a&l指引：{portal}&r", "&7在快捷栏上方显示前往目标传送门的方位。", "&e左键停止指引"]
+# ---- end lane:nexus ----
+
+# ---- lane:doors (doorview.* and pockets.*) ----
+[doorview]
+"disabled" = "&8[&6Wormholes&8] &c门投影已在 wormholes.toml 中关闭。"
+"toggle.inherit" = "&8[&6Wormholes&8] &7此门的投影：&f继承&7。"
+"toggle.on" = "&8[&6Wormholes&8] &a此门的投影：开启。"
+"toggle.off" = "&8[&6Wormholes&8] &e此门的投影：关闭。"
+"state.inherit" = "继承"
+"state.on" = "开启"
+"state.off" = "关闭"
+"menu.projection" = ["&b&l投影：{state}&r", "&7透过此门显示目的地。", "&e左键切换"]
+
+[pockets]
+"confirm.overwrite" = ["&8[&6Wormholes&8] &c这会替换口袋 &f{space}&c 内的所有内容。", "&8[&6Wormholes&8] &7使用 &fconfirm=true&7 重新执行同一命令以继续。"]
+"denied.build" = "&8[&6Wormholes&8] &c你不是此口袋的建造者。"
+"denied.pvp" = "&8[&6Wormholes&8] &c此口袋中已关闭战斗。"
+"instance.none" = "&8[&6Wormholes&8] &c此口袋不是实例。"
+"instance.reset" = "&8[&6Wormholes&8] &a口袋实例 &f{space}&a 已重置。"
+"room.added" = "&8[&6Wormholes&8] &a已向口袋 &f{space}&a 添加房间 &f{count}&a。"
+"room.blocked" = "&8[&6Wormholes&8] &c请将门放在内墙上。"
+"room.limit" = "&8[&6Wormholes&8] &c此口袋已达到 &f{count}&c 个房间的上限。"
+"roster.added" = "&8[&6Wormholes&8] &a{name}&a 以 &f{value}&a 身份加入口袋名单。"
+"roster.missing" = "&8[&6Wormholes&8] &c{name}&c 不在此口袋名单中。"
+"roster.removed" = "&8[&6Wormholes&8] &e{name}&e 已离开口袋名单。"
+"roster.role" = "&8[&6Wormholes&8] &a{name}&a 现在在此口袋中是 &f{value}&a。"
+"rules.invalid" = "&8[&6Wormholes&8] &c未知的口袋规则 &f{key}&c。"
+"rules.set" = "&8[&6Wormholes&8] &a{key} &7= &f{value}"
+"snapshot.missing" = "&8[&6Wormholes&8] &c此口袋没有名为 &f{name}&c 的快照。"
+"snapshot.restored" = "&8[&6Wormholes&8] &a已将快照 &f{name}&a 恢复到口袋 &f{space}&a。"
+"snapshot.saved" = "&8[&6Wormholes&8] &a已保存口袋 &f{space}&a 的快照 &f{name}&a。"
+"template.applied" = "&8[&6Wormholes&8] &a已将模板 &f{name}&a 应用到口袋 &f{space}&a。"
+"template.list" = "&8[&6Wormholes&8] &7模板（&f{count}&7）：&f{value}"
+"template.missing" = "&8[&6Wormholes&8] &c没有名为 &f{name}&c 的口袋模板。"
+# ---- end lane:doors ----
+
+# ---- lane:mesh (mesh.*) ----
+[mesh]
+pending = "&8[&6Wormholes&8] &e{server}&7 想通过 &f{name}&7 加入网络：/wh network accept {server}"
+accepted = "&8[&6Wormholes&8] &a已将 &f{server}&a 接纳进网络。"
+rejected = "&8[&6Wormholes&8] &c已拒绝 &f{server}&c 并丢弃其介绍。"
+tombstoned = "&8[&6Wormholes&8] &f{server}&7 已从整个网络移除。"
+disabled = "&8[&6Wormholes&8] &7网状联邦已&c禁用&7（[network.mesh] enabled = false）。"
+
+[mesh.introductions]
+none = "&8[&6Wormholes&8] &7没有等待批准的介绍。"
+unknown = "&8[&6Wormholes&8] &c{server} 并未等待批准。"
+
+[mesh.members]
+none = "&8[&6Wormholes&8] &7尚无已知的网络成员。"
+row = "&8[&6Wormholes&8] &f{server}&7 {state} &8{fingerprint}"
+
+[mesh.versions]
+none = "&8[&6Wormholes&8] &7尚无已连接的对等服务器。"
+row = "&8[&6Wormholes&8] &f{server}&7：协议 &f{value}&7，插件 &f{name}&7，能力 &f{state}"
+reduced = "&8[&6Wormholes&8] &e{server}&7 以受限能力连接：&f{reason}"
+
+[mesh.drain]
+on = "&8[&6Wormholes&8] &e排空模式已开启：在关闭排空前，本服务器拒绝新的到达。"
+off = "&8[&6Wormholes&8] &a排空模式已关闭：本服务器重新接受到达。"
+state = "&8[&6Wormholes&8] &7排空模式为 {state}。"
+invalid = "&8[&6Wormholes&8] &c排空状态必须为 on 或 off，收到 {value}。"
+
+[mesh.queue]
+position = "&7正在等待空闲服务器：位置 &f{count}&7，&f{seconds}&7 秒"
+timeout = "&c没有目标服务器及时腾出位置。"
+
+[mesh.policy]
+none = "&c当前没有可用的目的地。"
+set = "&8[&6Wormholes&8] &a&f{portal}&a 的策略：{value}"
+cleared = "&8[&6Wormholes&8] &7已清除 &f{portal}&7 的策略；它重新链接到普通目的地。"
+portal_unknown = "&8[&6Wormholes&8] &c没有名为 {portal} 的本地传送门。"
+invalid = "&8[&6Wormholes&8] &c无效策略：{reason}"
+
+[mesh.command.help]
+members = "列出所有网络成员及其链接状态和密钥指纹"
+pending = "列出等待批准的被介绍服务器"
+accept = "信任一台被介绍的服务器并保存其路由"
+reject = "丢弃某服务器待处理的介绍"
+versions = "显示每个对等服务器的协议、插件版本和能力"
+drain = "将本服务器移出目的地轮换或放回"
+policy = "设置或清除网关的目的地策略"
+
+[mesh.command.param.accept]
+server = "被介绍的服务器名称（见 /wh network pending）"
+
+[mesh.command.param.reject]
+server = "要拒绝的被介绍服务器名称"
+
+[mesh.command.param.drain]
+state = "on 或 off；省略则显示当前状态"
+
+[mesh.command.param.policy]
+portal = "本地传送门名称或 ID"
+candidates = "以逗号分隔的 server:portal[:weight] 条目；留空则清除策略"
+strategy = "FIRST_AVAILABLE、LEAST_LOADED、ROUND_ROBIN、STICKY 或 NEAREST"
+headroom = "候选服务器必须报告的空闲玩家位"
+tps = "候选服务器必须报告的最低 TPS；0 表示忽略 TPS"
+queue = "当所有候选都满员时让旅行者等待"
+# ---- end lane:mesh ----
+
+# ---- lane:transit (transit.*) ----
+[transit]
+bounced = "{portal} 把你推了回去。"
+
+[transit.denied]
+membrane = "{portal} 只能从正面进入。"
+convoy_size = "你的车队有 {count} 个实体；上限为 {value}。"
+convoy_fit = "你的车队无法穿过 {portal}。"
+convoy_member = "你的车队中有成员不能使用 {portal}。"
+
+[transit.convoy]
+waiting = "把整个车队都带过 {portal}。"
+failed = "车队传送失败：{reason}。"
+
+[transit.menu]
+entry = ["&b&l通行&r", "&7动量、朝向、单向膜、反弹与效果。", "&e左键"]
+momentum = ["&6&l动量：{mode}&r", "&7系数 {value}。出口速度如何由入口速度推算。", "&e左键切换模式", "&e右键设置系数"]
+orientation = ["&6&l朝向：{mode}&r", "&7旅行者到达时面朝的方向。", "&e左键切换"]
+membrane = ["&6&l单向膜：{state}&r", "&7只有正面允许进入；背面会将旅行者推开。", "&e左键切换"]
+bounce = ["&6&l反弹：{state}&r", "&7将旅行者弹回而不是传送。", "&e左键切换"]
+profile = ["&6&l过渡效果&r", "&7临界 {mode}", "&7到达 {state}", "&e左键：临界效果，右键：到达音效", "&eShift + 左键：遮罩刻数"]
+prompt = "&b在聊天中输入新值（或输入 '{cancel}'）："
+scale = ["&6&l旅行者缩放：{mode}&r", "&7尺寸范围 {value}。在不同大小的传送门之间映射旅行。", "&e左键切换模式", "&e右键：最小值，Shift + 右键：最大值"]
+
+gravity = ["&6&l重力方向: {state}&r", "&7使用模组的玩家会随传送门旋转地面、移动方向和角色模型。", "&e左键点击切换"]
+
+[transit.scale]
+current = "&8[&6Wormholes&8] &f{portal}&7 旅行者缩放：&f{mode}&7（{value}）"
+set = "&8[&6Wormholes&8] &f{portal}&a 旅行者缩放已设为 &f{mode}&a（{value}）。"
+invalid = "&8[&6Wormholes&8] &c无法读取旅行者缩放：{reason}"
+reset = "&8[&6Wormholes&8] &a已恢复 {count} 个实体的默认大小。"
+reset_radius = "&8[&6Wormholes&8] &ctarget=all 需要 1 到 {value} 的半径。"
+reset_player = "&8[&6Wormholes&8] &c没有名为 {name} 的在线玩家。"
+
+[transit.gravity]
+current = "&8[&6Wormholes&8] &f{portal}&7 重力方向: &f{state}"
+reset = "&8[&6Wormholes&8] &a已为 {name} 恢复正常重力。"
+client_required = "&8[&6Wormholes&8] &c此传送门需要 Wormholes 客户端模组才能改变重力方向。"
+# ---- end lane:transit ----
+
+# ---- lane:view (fidelity.*) ----
+[fidelity.menu]
+entry = ["&b&l保真度&r", "&7此传送门的大气、声学、细节与方块实体。", "&e左键点击"]
+placard = ["&b&l投影保真度&r", "&7叠加在投影上的逐传送门通道。"]
+atmosphere = "&b大气：&f{mode}"
+acoustics = "&b声学：&f{mode}"
+lod = "&b细节：&f{mode}"
+block_entities = "&b方块实体：&f{state}"
+hint = ["&8点击切换。", "&8Shift + 点击使用服务器默认值。"]
+back = ["&e&l返回&r", "&7返回传送门菜单。"]
+default = "默认"
+
+[fidelity.bedrock]
+profile = "Bedrock 配置已对 {count} 名观察者生效"
+# ---- end lane:view ----
+
+# ---- lane:ops (ops.*) ----
+[ops.console]
+started = "指标端点正在 {value} 上监听。"
+no_token = "指标端点未启动：请设置 [ops.console] token。"
+failed = "指标端点无法绑定 {value}：{reason}"
+
+[ops.webmap]
+published = "已向 {name} 发布 {count} 个传送门标记。"
+
+[ops.backup]
+created = "&8[&6Wormholes&8] &a备份 &f{id}&a 已写入 &f{path}&a。"
+restored = "&8[&6Wormholes&8] &a已从 &f{id}&a 恢复 &f{count}&a 个传送门。"
+dry_run = "&8[&6Wormholes&8] &7试运行：将有 &f{count}&7 个传送门发生变化。"
+list_row = "&8[&6Wormholes&8] &f{id} &8| &f{count}&7 个传送门 &8| &7{path}"
+list_empty = "&8[&6Wormholes&8] &f{path}&7 下没有备份。"
+not_found = "&8[&6Wormholes&8] &c没有与 &f{id}&c 匹配的备份。"
+confirm_required = "&8[&6Wormholes&8] &c加上 &fconfirm=true&c 重新执行以应用，或加上 &fdry=true&c 查看计划。"
+failed = "&8[&6Wormholes&8] &c备份操作失败：&f{reason}"
+reload_required = "&8[&6Wormholes&8] &7传送门文件已替换。执行 &f/wormholes reload&7 加载它们。"
+signature_broken = "&8[&6Wormholes&8] &c拒绝 &f{id}&c：签名与内容不符。"
+signature_untrusted = "&8[&6Wormholes&8] &c拒绝 &f{id}&c：由 &f{fingerprint}&c 签名，本服务器并不信任它。加上 &fallow-unsigned=true&c 可仍然应用。"
+signature_ok = "&8[&6Wormholes&8] &7由 &f{name}&7 (&f{fingerprint}&7) 签名。"
+
+[ops.import]
+report = "&8[&6Wormholes&8] &f{name}&7：导入 &f{count}&7 个传送门，跳过 &f{value}&7 个。"
+skipped_row = "&8[&6Wormholes&8] &7{portal}&8：&f{reason}"
+not_detected = "&8[&6Wormholes&8] &c在 &f{path}&c 下未找到 {name} 数据。"
+
+[ops.portals]
+row = "&8[&6Wormholes&8] &f{portal} &8| &7{world} &8| &7{state} &8| &7{destination}"
+page = "&8[&6Wormholes&8] &7第 &f{page}&7/&f{pages} 页"
+empty = "&8[&6Wormholes&8] &7没有传送门符合这些筛选条件。"
+not_found = "&8[&6Wormholes&8] &c没有与 &f{name}&c 匹配的传送门。"
+ambiguous = "&8[&6Wormholes&8] &c有 {count} 个传送门与 &f{name}&c 匹配；请使用 id。"
+info = ["&8[&6Wormholes&8] &7传送门 &f{portal} &8| &7{id}", "&8[&6Wormholes&8] &7世界 &f{world}&7 位置 &f{value}", "&8[&6Wormholes&8] &7状态 &f{state}&7，目的地 &f{destination}&7，所有者 &f{owner}"]
+teleported = "&8[&6Wormholes&8] &a已传送到 &f{portal}&a。"
+teleport_unsafe = "&8[&6Wormholes&8] &e&f{portal}&e 附近没有安全落点；改用传送门中心。"
+retargeted = "&8[&6Wormholes&8] &a&f{portal}&a 现在指向 &f{destination}&a。"
+unlinked = "&8[&6Wormholes&8] &a&f{portal}&a 已解除链接。"
+pruned = "&8[&6Wormholes&8] &a已清理 &f{count}&a 个孤立链接。"
+prune_dry_run = "&8[&6Wormholes&8] &7试运行：将清理 &f{count}&7 个孤立链接。"
+renamed_server = "&8[&6Wormholes&8] &a已将 &f{count}&a 个网关链接从 &f{name}&a 改写为 &f{server}&a。"
+
+[ops.command.help]
+backup = "创建、列出、恢复和交换传送门备份"
+"backup.now" = "立即写入一份传送门数据备份"
+"backup.list" = "列出磁盘上的备份"
+"backup.restore" = "从备份恢复传送门文件（dry=true 只显示计划）"
+"backup.restore.id" = "来自 /wormholes admin backup list 的备份 id"
+"backup.restore.dry" = "只报告将要发生的变化，不写入任何内容"
+"backup.restore.world_map" = "世界重命名，格式为 旧=新,旧=新"
+"backup.restore.owner_map" = "所有者重命名，格式为 旧uuid=新uuid"
+"backup.restore.confirm" = "dry=false 时写入文件所必需"
+"backup.allow_unsigned" = "应用未经受信任密钥签名的备份包"
+"backup.export" = "把备份包写入可在服务器间搬运的文件"
+"backup.export.file" = "目标文件；留空则写入备份文件夹"
+"backup.import" = "导入从其他服务器导出的备份包"
+"backup.import.file" = "要读取的备份包文件"
+"backup.import.dry" = "只报告将要发生的变化，不写入任何内容"
+"backup.import.world_map" = "世界重命名，格式为 旧=新,旧=新"
+"backup.import.owner_map" = "所有者重命名，格式为 旧uuid=新uuid"
+"backup.import.confirm" = "dry=false 时写入文件所必需"
+"backup.import_from" = "从其他传送门插件的文件导入传送门"
+"backup.import_from.source" = "stargate、advancedportals、multiverse、betterportals 或 essentials"
+"backup.import_from.dry" = "只报告将要创建的内容，不创建任何东西"
+"backup.import_from.frame" = "为没有边框的数据指定边框尺寸，格式为 宽,高"
+portals = "列出、查看并批量编辑传送门"
+"portals.list" = "按可选条件列出传送门"
+"portals.list.world" = "仅此世界中的传送门"
+"portals.list.type" = "仅此类型的传送门：portal、wormhole、gateway 或 rtp"
+"portals.list.owner" = "仅属于此玩家名或 uuid 的传送门"
+"portals.list.state" = "仅处于此状态的传送门：open、closed、linked 或 unlinked"
+"portals.list.page" = "页码"
+"portals.find" = "查找名称包含该文本的传送门"
+"portals.find.name" = "要搜索的文本"
+"portals.info" = "显示传送门的世界、状态、目的地和所有者"
+"portals.info.portal" = "传送门名称或 id"
+"portals.tp" = "传送到某个传送门并落在安全地面"
+"portals.tp.portal" = "传送门名称或 id"
+"portals.retarget" = "让一个传送门指向另一个本地传送门"
+"portals.retarget.portal" = "要修改的传送门名称或 id"
+"portals.retarget.destination" = "目标传送门名称或 id"
+"portals.unlink" = "移除传送门的目的地"
+"portals.unlink.portal" = "传送门名称或 id"
+"portals.prune" = "移除目的地已不存在的链接"
+"portals.prune.dry" = "只报告将被移除的内容，不做任何更改"
+"portals.prune.confirm" = "dry=false 时执行移除所必需"
+"portals.rename_server" = "把跨服链接中的服务器名改写为另一个名称"
+"portals.rename_server.old" = "链接中当前保存的服务器名"
+"portals.rename_server.new" = "要改存的服务器名"
+"portals.rename_server.confirm" = "改写链接所必需"
+"portals.shape" = "显示或设置传送门的开口形状"
+"portals.shape.portal" = "传送门名称或 id"
+"portals.shape.shape" = "形状文本，例如 circle、flower(petals=7) 或 full；留空则显示当前形状"
+"portals.scale" = "查看或设置传送门的旅行者缩放规则"
+"portals.scale.portal" = "传送门名称或 id"
+"portals.scale.mode" = "off、motion 或 ratio；全部省略则显示当前规则"
+"portals.scale.min" = "ratio 穿越可达到的最小尺寸倍数（0.0625-16）"
+"portals.scale.max" = "ratio 穿越可达到的最大尺寸倍数（0.0625-16）"
+"scale" = "恢复被传送门缩放的旅行者的默认大小"
+"scale.reset" = "移除某个玩家或附近所有实体的传送门缩放"
+"scale.reset.target" = "self、玩家名称或 all"
+"scale.reset.radius" = "target=all 时的搜索半径（方块，1-256）"
+# ---- end lane:ops ----
+
+# ---- lane:clientview (clientview.*) ----
+[clientview.command]
+header = "&6ClientView &7运行时 {state}，配置 {mode}，{count} 个会话"
+row = "&e{name} &7{state} &8| &7{value}"
+none = "&7没有玩家拥有 ClientView 会话。"
+enabled = "&a已重新提供 ClientView。配置：{mode}。"
+disabled = "&cClientView 已关闭。所有会话已恢复为原版投影。"
+reset = "&a正在重新启动 {name} 的 ClientView 数据流。"
+no_session = "&c{name} 没有活动的 ClientView 会话。"
+player_missing = "&c没有名为 {name} 的在线玩家。"
+
+[clientview.command.help]
+clientview = "运行 Wormholes 模组的玩家的 ClientView 会话"
+status = "列出所有 ClientView 会话"
+on = "重新向模组客户端提供 ClientView"
+off = "让所有 ClientView 玩家恢复原版投影"
+reset = "重新启动某个玩家的 ClientView 数据流"
+"reset.player" = "在线玩家名称"
+# ---- end lane:clientview ----

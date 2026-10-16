@@ -1,0 +1,125 @@
+package art.arcane.wormholes.render;
+
+import art.arcane.optics.fidelity.FidelityOptions;
+import art.arcane.optics.volume.LodPolicy;
+import art.arcane.optics.volume.LodProfile;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
+import art.arcane.wormholes.config.WormholesSettings;
+import art.arcane.wormholes.config.toml.AcousticsConfig;
+import art.arcane.wormholes.config.toml.AtmosphereConfig;
+import art.arcane.wormholes.config.toml.BedrockConfig;
+import art.arcane.wormholes.config.toml.LodConfig;
+import art.arcane.wormholes.config.toml.ProjectionConfig;
+import art.arcane.wormholes.config.toml.RenderConfig;
+import art.arcane.optics.fidelity.AcousticsProfile;
+import art.arcane.optics.fidelity.AtmosphereMode;
+
+/**
+ * Live snapshot of the view lane's configuration. Refreshed by the render subsystem on start and
+ * on every settings reload; defaults mirror the config section defaults so tests and early boot read
+ * sane values without a loaded config.
+ */
+public final class FidelitySettings {
+    public static volatile boolean sharedPlate = true;
+    public static volatile long plateMaxBytes = 33_554_432L;
+    public static volatile int plateWorkers = 2;
+    public static volatile boolean rtpPlates = true;
+    public static volatile int plateLateralClampBlocks = 40;
+    public static volatile int plateCaptureChunksPerTick = 8;
+    public static volatile int plateUrgentCaptureChunksPerTick = 32;
+    public static volatile boolean blockEntities = true;
+    public static volatile int blockEntityBudgetPerTick = 64;
+    public static volatile List<String> blockEntityTypes = RenderConfig.DEFAULT_BLOCK_ENTITY_TYPES;
+    public static volatile boolean blockEntityContainers = false;
+    public static volatile AtmosphereMode atmosphereModeDefault = AtmosphereMode.OFF;
+    public static volatile boolean biomeTint = false;
+    public static volatile boolean skyLight = false;
+    public static volatile boolean fogPlate = true;
+    public static volatile boolean weather = true;
+    public static volatile int lodDistanceBlocks = 32;
+    public static volatile boolean lodMergeRuns = true;
+    public static volatile int lodDetailCutoffBlocks = 48;
+    public static volatile int dissolveTicks = 8;
+    public static volatile AcousticsProfile acousticsProfileDefault = AcousticsProfile.AMBIENT;
+    public static volatile int rtpRimIntervalTicks = 5;
+    public static volatile int ambientParticleIntervalTicks = 1;
+    private static volatile FidelityOptions snapshot = new FidelityOptions(0.005D, 0.6D, true, false, false, 8, 24.0D, 8);
+
+    private FidelitySettings() {
+    }
+
+    public static void refresh(WormholesSettings settings) {
+        if (settings == null) {
+            return;
+        }
+        ProjectionConfig projection = settings.getProjection();
+        RenderConfig render = settings.getRender();
+        AtmosphereConfig atmosphere = settings.getAtmosphere();
+        LodConfig lod = settings.getLod();
+        AcousticsConfig acoustics = settings.getAcoustics();
+        BedrockConfig bedrock = settings.getBedrock();
+
+        sharedPlate = projection.sharedPlate;
+        plateMaxBytes = Math.max(1_048_576L, Math.min(1_073_741_824L, projection.plateMaxBytes));
+        plateWorkers = clamp(projection.plateWorkers, 1, 16);
+        rtpPlates = projection.rtpPlates;
+        plateLateralClampBlocks = clamp(projection.plateLateralClampBlocks, 0, 64);
+        plateCaptureChunksPerTick = clamp(projection.plateCaptureChunksPerTick, 1, 256);
+        plateUrgentCaptureChunksPerTick = clamp(projection.plateUrgentCaptureChunksPerTick, 1, 256);
+        blockEntities = render.blockEntities;
+        blockEntityBudgetPerTick = clamp(render.blockEntityBudgetPerTick, 1, 1024);
+        blockEntityTypes = normalizeTypes(render.blockEntityTypes);
+        blockEntityContainers = render.blockEntityContainers;
+        atmosphereModeDefault = AtmosphereMode.parse(atmosphere.modeDefault, AtmosphereMode.OFF);
+        biomeTint = atmosphere.biomeTint;
+        skyLight = atmosphere.skyLight;
+        fogPlate = atmosphere.fogPlate;
+        weather = atmosphere.weather;
+        lodDistanceBlocks = clamp(lod.distanceBlocks, 1, 256);
+        lodMergeRuns = lod.mergeRuns;
+        lodDetailCutoffBlocks = clamp(lod.detailCutoffBlocks, 1, 256);
+        dissolveTicks = clamp(lod.dissolveTicks, 0, 200);
+        acousticsProfileDefault = AcousticsProfile.parse(acoustics.profileDefault, AcousticsProfile.AMBIENT);
+        rtpRimIntervalTicks = clamp(render.rtpRimIntervalTicks, 1, 100);
+        ambientParticleIntervalTicks = clamp(render.ambientParticleIntervalTicks, 1, 40);
+        snapshot = new FidelityOptions(clamp(render.entityVelocityEpsilon, 0.0D, 1.0D), clamp(atmosphere.biomeDominance, 0.0D, 1.0D),
+            bedrock.enabled, bedrock.displayEntities, bedrock.lightingFidelity, clamp(bedrock.entityCap, 0, 256),
+            clamp(acoustics.radius, 0.0D, 128.0D), clamp(acoustics.rateCapPerObserver, 0, 200));
+    }
+
+    public static FidelityOptions snapshot() {
+        return snapshot;
+    }
+
+    static List<String> normalizeTypes(List<String> configured) {
+        if (configured == null) {
+            return RenderConfig.DEFAULT_BLOCK_ENTITY_TYPES;
+        }
+        List<String> normalized = new ArrayList<String>(configured.size());
+        for (String type : configured) {
+            if (type == null || type.isBlank()) {
+                continue;
+            }
+            String key = type.trim().toLowerCase(Locale.ROOT);
+            normalized.add(key.indexOf(':') >= 0 ? key : "minecraft:" + key);
+        }
+        return List.copyOf(normalized);
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private static double clamp(double value, double min, double max) {
+        if (!Double.isFinite(value)) {
+            return min;
+        }
+        return Math.max(min, Math.min(max, value));
+    }
+    public static LodPolicy lodPolicy(LodProfile profile) {
+        return LodPolicy.forProfile(profile, lodMergeRuns, lodDistanceBlocks, lodDetailCutoffBlocks);
+    }
+}

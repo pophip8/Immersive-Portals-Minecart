@@ -1,0 +1,303 @@
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+import org.gradle.api.tasks.compile.JavaCompile
+import org.gradle.api.tasks.TaskProvider
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+
+plugins {
+    id 'java'
+    id 'net.neoforged.moddev' version '2.0.147'
+    id 'com.gradleup.shadow' version '9.5.1'
+}
+
+apply from: '../../gradle/modded-target.gradle'
+String minecraftVersion = project.ext.minecraftTargetVersion
+Map<String, Object> target = project.ext.minecraftTarget
+Map<String, String> renderDependencies = (Map<String, String>) ((Map<String, Object>) target['renderDependencies'])["neoforge"]
+String loaderVersion = providers.gradleProperty('neoForgeVersion').getOrElse(((Map<String, String>) target['loaders'])['neoforge'])
+String artifactLoaderVersion = loaderVersion.replaceFirst(/-beta$/, '')
+project(':core') {
+    layout.buildDirectory.set(rootProject.layout.buildDirectory.dir('core'))
+}
+project(':optics') {
+    layout.buildDirectory.set(rootProject.layout.buildDirectory.dir('optics'))
+}
+
+group = 'art.arcane'
+version = project.ext.minecraftMetadata['version']
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+List<String> sharedClientTestClasses = [
+    'art.arcane.wormholes.modded.mixin.client.GravityCameraScaleHistoryTest',
+    'art.arcane.wormholes.modded.client.NativeLightNotificationTest',
+    'art.arcane.wormholes.modded.client.ClientSeamlessTravelTest',
+    'art.arcane.wormholes.modded.client.ClientTravelCrossingDeclineTest',
+    'art.arcane.wormholes.modded.client.ClientSeamlessTravelScaleTest',
+    'art.arcane.wormholes.modded.client.ClientSeamlessTravelGravityTest',
+    'art.arcane.wormholes.modded.client.ClientCrossingViewTest',
+    'art.arcane.wormholes.modded.client.ClientParticleLevelsTest',
+    'art.arcane.wormholes.modded.client.ClientLevelSwitchProbeTest',
+    'art.arcane.wormholes.modded.client.ClientEntityCrossingsTest',
+    'art.arcane.wormholes.modded.client.ResidentLevelsOpenCloseTest',
+    'art.arcane.wormholes.modded.client.ResidentLevelsRoutingTest',
+    'art.arcane.wormholes.modded.client.ResidentLevelsMemoryBudgetTest',
+    'art.arcane.wormholes.modded.client.StraddleClientTest',
+    'art.arcane.wormholes.modded.seamless.RemoteViewerPairingTest',
+    'art.arcane.wormholes.modded.client.ClientTravelMotionTest',
+    'art.arcane.wormholes.modded.client.ClientTravelMotionLookTest',
+    'art.arcane.wormholes.modded.client.PreparedChunkCacheTest',
+    'art.arcane.wormholes.modded.client.ResourceArgumentGrammarTest',
+    'art.arcane.wormholes.modded.client.ClientVanillaPortalEffectTest',
+    'art.arcane.wormholes.modded.client.render.dh.DhMainRenderContextTest',
+    'art.arcane.wormholes.modded.client.render.sodium.SodiumArrivalSectionTest'
+]
+
+sourceSets {
+    main {
+        java.srcDir('../modded-common/src/main/java')
+        resources.srcDir('../modded-common/src/main/resources')
+    }
+    test {
+        java.srcDir('../modded-common/src/test/java')
+        for (String testClass : sharedClientTestClasses) {
+            java.exclude(testClass.replace('.', '/') + '.java')
+        }
+    }
+    clientGameTest {
+        java.srcDir('../modded-common/src/clientGameTest/java')
+        java.srcDir('../modded-common/src/clientGameTestDriver/java')
+        resources.srcDir('../modded-common/src/clientGameTest/resources')
+        resources.srcDir('../modded-common/src/clientGameTestDriver/resources')
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven { url = uri('https://api.modrinth.com/maven') }
+    maven { url = uri('https://maven.fabricmc.net/') }
+    maven { url = uri('https://maven.neoforged.net/releases/') }
+}
+
+configurations {
+    irisParserApi {
+        canBeConsumed = false
+        canBeResolved = true
+        transitive = false
+    }
+    sodiumApi {
+        canBeConsumed = false
+        canBeResolved = true
+    }
+    bundle {
+        canBeConsumed = false
+        canBeResolved = true
+        exclude(group: 'it.unimi.dsi', module: 'fastutil')
+    }
+}
+
+TaskProvider<Sync> extractSodiumApi = tasks.register('extractSodiumApi', Sync) {
+    from({ zipTree(configurations.sodiumApi.singleFile) })
+    include((String) target['neoForgeSodiumJar'])
+    into(layout.buildDirectory.dir('sodium-api'))
+}
+FileCollection sodiumApiClasses = files(layout.buildDirectory.file(
+    "sodium-api/${target['neoForgeSodiumJar']}")).builtBy(extractSodiumApi)
+
+TaskProvider<Sync> extractIrisParserApi = tasks.register('extractIrisParserApi', Sync) {
+    from({ zipTree(configurations.irisParserApi.singleFile) })
+    include('META-INF/jarjar/glsl-transformer-3.0.0-pre3.jar')
+    include('META-INF/jarjar/antlr4-runtime-4.13.1.jar')
+    into(layout.buildDirectory.dir('iris-parser-api'))
+}
+FileCollection irisParserClasses = files(
+    layout.buildDirectory.file('iris-parser-api/META-INF/jarjar/glsl-transformer-3.0.0-pre3.jar'),
+    layout.buildDirectory.file('iris-parser-api/META-INF/jarjar/antlr4-runtime-4.13.1.jar')).builtBy(extractIrisParserApi)
+
+dependencies {
+    irisParserApi(renderDependencies['iris'])
+    compileOnly(irisParserClasses)
+    testCompileOnly(irisParserClasses)
+    compileOnly(renderDependencies['iris']) { transitive = false }
+    compileOnly(renderDependencies['distantHorizons']) { transitive = false }
+    sodiumApi(renderDependencies['sodium']) { transitive = false }
+    compileOnly(sodiumApiClasses)
+    testCompileOnly(sodiumApiClasses)
+    testRuntimeOnly(sodiumApiClasses)
+    testImplementation(renderDependencies['iris']) { transitive = false }
+    testImplementation(renderDependencies['distantHorizons']) { transitive = false }
+    testImplementation(renderDependencies['sodium']) { transitive = false }
+    implementation(project(':core'))
+    bundle(project(':core'))
+    implementation(project(':optics'))
+    bundle(project(':optics'))
+    implementation('com.github.VolmitSoftware.VolmLib:volmlib-web:master-SNAPSHOT')
+    bundle('com.github.VolmitSoftware.VolmLib:volmlib-web:master-SNAPSHOT')
+    testImplementation('junit:junit:4.13.2')
+    testImplementation('org.mockito:mockito-core:5.23.0')
+    testRuntimeOnly('org.junit.platform:junit-platform-launcher:6.1.2')
+    testRuntimeOnly('org.junit.vintage:junit-vintage-engine:6.1.2')
+}
+
+evaluationDependsOn(':core')
+evaluationDependsOn(':optics')
+
+neoForge {
+    version = loaderVersion
+    mods {
+        wormholes {
+            sourceSet(sourceSets.main)
+            sourceSet(project(':core').sourceSets.main)
+            sourceSet(project(':optics').sourceSets.main)
+        }
+        wormholes_clientgametest {
+            sourceSet(sourceSets.clientGameTest)
+        }
+    }
+    runs {
+        server {
+            server()
+            programArgument('nogui')
+            loadedMods = [mods.wormholes]
+        }
+        clientGameTest {
+            client()
+            sourceSet = sourceSets.clientGameTest
+            loadedMods = [mods.wormholes, mods.wormholes_clientgametest]
+            gameDirectory = layout.buildDirectory.dir('run/clientGameTest').get().asFile
+            systemProperty('wormholes.clientgametest', 'true')
+            systemProperty('wormholes.clientgametest.server', providers.gradleProperty('clientGameTestServer').getOrElse(''))
+            systemProperty('wormholes.clientgametest.filter', providers.gradleProperty('clientGameTestFilter').getOrElse(''))
+        }
+    }
+    unitTest {
+        enable()
+        testedMod = mods.wormholes
+    }
+}
+
+tasks.named('test').configure {
+    useJUnitPlatform()
+    for (String testClass : sharedClientTestClasses) {
+        exclude(testClass.replace('.', '/') + '*.class')
+    }
+    inputs.files(file('../../optics/src/test/resources/block-state-goldens.txt'),
+        fileTree('../../optics/src/test/resources/art/arcane/optics/stream/goldens'))
+        .withPropertyName('opticsGoldenVectors')
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    filter {
+        excludeTestsMatching('art.arcane.wormholes.modded.client.render.PortalSectionMeshTest')
+    }
+}
+
+evaluationDependsOn(':clientTestHost')
+Project clientTestHost = project(':clientTestHost')
+TaskProvider<Test> sharedClientTest = tasks.register('sharedClientTest', Test) {
+    group = 'verification'
+    dependsOn(clientTestHost.tasks.named('testClasses'))
+    testClassesDirs = clientTestHost.sourceSets.test.output.classesDirs
+    classpath = clientTestHost.sourceSets.test.runtimeClasspath
+    filter {
+        for (String testClass : sharedClientTestClasses) {
+            includeTestsMatching(testClass)
+        }
+    }
+    shouldRunAfter(tasks.named('test'))
+}
+
+tasks.named('check').configure {
+    dependsOn(sharedClientTest)
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release.set(25)
+    options.compilerArgs.add('-parameters')
+}
+
+processResources {
+    filesMatching('wormholes-build.properties') {
+        expand('version': project.version)
+    }
+    inputs.property('version', project.version)
+    inputs.property('minecraftVersion', minecraftVersion)
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand(project.ext.minecraftMetadata)
+    }
+}
+
+tasks.named('shadowJar', ShadowJar).configure {
+    archiveFileName.set("Wormholes v${project.version} [NeoForge] ${minecraftVersion}+${artifactLoaderVersion}.jar")
+    configurations = [project.configurations.bundle]
+    filesMatching('META-INF/services/**') {
+        duplicatesStrategy = DuplicatesStrategy.INCLUDE
+    }
+    mergeServiceFiles()
+    relocate('net.kyori', 'art.arcane.wormholes.shadow.kyori')
+    relocate('art.arcane.volmlib', 'art.arcane.wormholes.shadow.volmlib')
+    relocate('org.yaml.snakeyaml', 'art.arcane.wormholes.shadow.snakeyaml')
+    relocate('com.electronwill.nightconfig', 'art.arcane.wormholes.shadow.nightconfig')
+    relocate('com.moandjiezana.toml', 'art.arcane.wormholes.shadow.toml')
+    dependencies {
+        exclude(dependency('com.google.code.gson:gson:.*'))
+    }
+    exclude('META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA')
+    exclude('META-INF/versions/**', 'module-info.class')
+    from('../../LICENSE.md')
+    from('../../THIRD-PARTY-NOTICES.md')
+    addMultiReleaseAttribute.set(false)
+}
+
+tasks.named('jar').configure {
+    enabled = false
+}
+
+tasks.named('assemble').configure {
+    dependsOn(tasks.named('shadowJar'))
+}
+
+tasks.named('processResources').configure {
+    from('../../src/main/resources/wormholes-pockets-pack') {
+        include('data/**')
+    }
+}
+
+ext.shadowJarType = ShadowJar
+apply from: '../game-test.gradle'
+apply from: '../../gradle/modded-artifact.gradle'
+tasks.named('verifyModdedArtifact').configure {
+    metadata.set('META-INF/neoforge.mods.toml')
+}
+
+tasks.named('processClientGameTestResources').configure {
+    inputs.property('version', project.version)
+    inputs.property('minecraftVersion', minecraftVersion)
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand(project.ext.minecraftMetadata)
+    }
+}
+
+tasks.register('clientGameTestJar', Jar) {
+    group = 'verification'
+    archiveFileName.set('Wormholes-ClientGameTest.jar')
+    from(sourceSets.clientGameTest.output)
+}
+
+tasks.named('runClientGameTest').configure {
+    doFirst {
+        File fmlConfig = layout.buildDirectory.file('run/clientGameTest/config/fml.toml').get().asFile
+        fmlConfig.parentFile.mkdirs()
+        fmlConfig.text = 'earlyWindowControl = false\nversionCheck = false\n'
+    }
+}
+
+tasks.named('check').configure {
+    dependsOn(tasks.named('clientGameTestClasses'))
+}
+
+apply from: '../../gradle/modded-sources.gradle'

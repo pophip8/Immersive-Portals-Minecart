@@ -1,0 +1,9 @@
+{
+  "type": "minecraft:function",
+  "function": "wormholes:interaction_runtime",
+  "environment": "wormholes:interaction_runtime",
+  "structure": "wormholes:empty",
+  "max_ticks": 1200,
+  "setup_ticks": 5,
+  "sky_access": true
+}

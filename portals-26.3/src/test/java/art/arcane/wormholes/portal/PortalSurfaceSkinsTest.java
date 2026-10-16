@@ -1,0 +1,74 @@
+package art.arcane.wormholes.portal;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.Optional;
+
+import org.junit.jupiter.api.Test;
+
+public final class PortalSurfaceSkinsTest
+{
+	@Test
+	public void normalizeSkinTrimsLowercasesAndEmptiesBlanks()
+	{
+		assertEquals("", PortalSurfaceSkins.normalizeSkin(null));
+		assertEquals("", PortalSurfaceSkins.normalizeSkin("   "));
+		assertEquals("minecraft:glass", PortalSurfaceSkins.normalizeSkin("  Minecraft:Glass  "));
+	}
+
+	@Test
+	public void isFluidRecognizesWaterAndLava()
+	{
+		assertTrue(PortalSurfaceSkins.isFluid("minecraft:water"));
+		assertTrue(PortalSurfaceSkins.isFluid("minecraft:lava"));
+		assertTrue(PortalSurfaceSkins.isFluid("minecraft:water[level=0]"));
+		assertTrue(PortalSurfaceSkins.isFluid("water"));
+		assertFalse(PortalSurfaceSkins.isFluid("minecraft:glass"));
+		assertFalse(PortalSurfaceSkins.isFluid("minecraft:blue_ice"));
+		assertFalse(PortalSurfaceSkins.isFluid(""));
+		assertFalse(PortalSurfaceSkins.isFluid(null));
+	}
+
+	@Test
+	public void transparencyIsNameBased()
+	{
+		assertTrue(BukkitPortalSurfaces.isTransparentSkin("minecraft:glass"));
+		assertTrue(BukkitPortalSurfaces.isTransparentSkin("minecraft:blue_stained_glass"));
+		assertTrue(BukkitPortalSurfaces.isTransparentSkin("minecraft:tinted_glass"));
+		assertTrue(BukkitPortalSurfaces.isTransparentSkin("minecraft:ice"));
+		assertTrue(BukkitPortalSurfaces.isTransparentSkin("minecraft:packed_ice"));
+		assertTrue(BukkitPortalSurfaces.isTransparentSkin("minecraft:blue_ice"));
+		assertTrue(BukkitPortalSurfaces.isTransparentSkin("minecraft:frosted_ice"));
+		assertTrue(BukkitPortalSurfaces.isTransparentSkin("minecraft:slime_block"));
+		assertTrue(BukkitPortalSurfaces.isTransparentSkin("minecraft:honey_block"));
+		assertTrue(BukkitPortalSurfaces.isTransparentSkin("minecraft:barrier"));
+		assertTrue(BukkitPortalSurfaces.isTransparentSkin("minecraft:water"));
+		assertTrue(BukkitPortalSurfaces.isTransparentSkin("minecraft:water[level=0]"));
+
+		assertFalse(BukkitPortalSurfaces.isTransparentSkin("minecraft:lava"));
+		assertFalse(BukkitPortalSurfaces.isTransparentSkin("minecraft:lava[level=0]"));
+		assertFalse(BukkitPortalSurfaces.isTransparentSkin(""));
+	}
+
+	@Test
+	public void transparencyFallsBackToMaterialOcclusion()
+	{
+		assertTrue(PortalSurfaceSkins.isTransparentSkin("minecraft:oak_slab", id -> id.equals("oak_slab")));
+		assertTrue(PortalSurfaceSkins.isTransparentSkin("minecraft:oak_leaves[persistent=true]", id -> id.equals("oak_leaves")));
+		assertFalse(PortalSurfaceSkins.isTransparentSkin("minecraft:stone", id -> false));
+		assertFalse(PortalSurfaceSkins.isTransparentSkin("minecraft:not_a_real_block", id -> false));
+	}
+
+	@Test
+	public void skinForHeldItemMapsBuckets()
+	{
+		assertEquals(Optional.of("minecraft:water"), PortalSurfaceSkins.skinForHeldItem("WATER_BUCKET"));
+		assertEquals(Optional.of("minecraft:lava"), PortalSurfaceSkins.skinForHeldItem("LAVA_BUCKET"));
+		assertEquals(Optional.of("minecraft:water"), PortalSurfaceSkins.skinForHeldItem(" water_bucket "));
+		assertEquals(Optional.empty(), PortalSurfaceSkins.skinForHeldItem("GLASS"));
+		assertEquals(Optional.empty(), PortalSurfaceSkins.skinForHeldItem("BUCKET"));
+		assertEquals(Optional.empty(), PortalSurfaceSkins.skinForHeldItem(null));
+	}
+}

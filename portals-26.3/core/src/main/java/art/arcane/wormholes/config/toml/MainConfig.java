@@ -1,0 +1,66 @@
+package art.arcane.wormholes.config.toml;
+
+import art.arcane.wormholes.util.project.config.ConfigDescription;
+import art.arcane.wormholes.util.project.config.ConfigDoc;
+
+@ConfigDoc({
+    "Gameplay settings. Changes hot-reload."
+})
+public class MainConfig {
+    @ConfigDescription("Compatibility override for portal particles. Prefer the top-level quality profile.")
+    public boolean enableParticles = true;
+
+    @ConfigDescription("Replace vanilla Nether and End portals with auto-linking Wormholes portals.")
+    public boolean replaceNetherAndEndPortals = true;
+
+    @ConfigDescription("Enable the complete Dimensional Doors survival feature set.")
+    public boolean dimensionalDoorsEnabled = true;
+    @ConfigDescription("Edge length in blocks of a newly created pocket room, walls included, between 8 and 128. Existing pockets keep the size they were built at; change those with /wormholes pocket resize.")
+    public int pocketRoomSize = 16;
+    @ConfigDescription("Block a newly created pocket room's walls, floor, and ceiling are built from. Must be a solid, non-falling block. Existing pockets keep their own material.")
+    public String pocketShellMaterial = "SMOOTH_STONE";
+    @ConfigDescription("Door a newly created pocket room's exit is built from. Must be a hand-operable door, so iron doors are rejected. Existing pockets keep their own door.")
+    public String pocketReturnDoorMaterial = "CRIMSON_DOOR";
+    public double portalCollapseSpeed = 0.91;
+    @ConfigDescription("Enable console debug with one-second projection, network, peer, handoff, and failure summaries plus access-denial details. Use /wormholes debug toggle for a temporary session.")
+    public boolean verboseLogging = false;
+    public boolean debugRendering = false;
+    public int teleportCooldownMillis = 1000;
+    @ConfigDescription("Scales rejected-traversal push velocity. 0 removes knockback, 1 preserves normal strength, and 4 is the maximum.")
+    public double portalPushbackMultiplier = 1.0;
+    @ConfigDescription("Scales portal, traversal, and dimensional-door sound volume. 0 mutes these sounds, 1 preserves normal volume, and 4 is the maximum.")
+    public double portalSoundVolumeMultiplier = 1.0;
+    @ConfigDescription("Allow other plugins to price or veto a portal traversal through the Wormholes traversal API. When false, no cost provider is called and neither traversal event fires.")
+    public boolean traversalApiEnabled = true;
+    @ConfigDescription("What to do when a third-party traversal cost provider throws or misbehaves: allow (treat it as a refusal to charge and let this traversal through free) or deny (reject this traversal attempt).")
+    public String traversalApiProviderFailurePolicy = "allow";
+    @ConfigDescription("Failures before a misbehaving traversal cost provider is disabled for this session. 0 disables quarantine.")
+    public int traversalApiProviderFaultLimit = 5;
+    @ConfigDescription("Warn when a single traversal cost provider call takes at least this many milliseconds. 0 disables the warning.")
+    public int traversalApiSlowProviderMillis = 5;
+    @ConfigDescription("Send the destination's chunks to the player during the moment a portal traversal commits, so the destination world is already drawn when they arrive instead of appearing blank while it streams in. Verified under load; set false if a traversal ever stalls a tick.")
+    public boolean chunkPreSendEnabled = true;
+    @ConfigDescription("How many chunks out from the destination to pre-send. Further clamped to what the client will accept.")
+    public int chunkPreSendRadiusChunks = 3;
+    @ConfigDescription("Hard ceiling on chunks pre-sent for one traversal. A partial pre-send is a shorter blink; an overrun is a server stall.")
+    public int chunkPreSendMaxChunks = 32;
+    @ConfigDescription("Microseconds of the commitment tick the pre-send may use before it stops early and delivers what it has.")
+    public int chunkPreSendBudgetMicros = 2000;
+    public boolean arrivalPrewarmOnInterest = true;
+    public int arrivalWarmRadiusChunks = 4;
+    public int arrivalWarmMaxRadiusChunks = 10;
+    public int arrivalWarmHoldMillis = 5000;
+    public int arrivalWarmThrottleMillis = 1000;
+    public boolean arrivalTransitionMask = true;
+    public int arrivalTransitionMaskTicks = 25;
+
+    @ConfigDescription("Raise the server's per-player chunk streaming limits at startup and when the tuner settings change so destination geometry can reach the client before arrival. Only ever raises; a higher server value is left alone. Disabling the tuner stops further changes without restoring earlier rates.")
+    public boolean chunkSendRateTuner = true;
+    @ConfigDescription("Target per-player chunk send rate in chunks per second. Paper's compiled default is 75. Zero or negative means unlimited, and anything above 10000 is treated as unlimited.")
+    public double chunkSendRateTarget = 1000.0;
+    @ConfigDescription("Target per-player chunk load rate in chunks per second. Paper's compiled default is 100. Zero or negative means unlimited, and anything above 10000 is treated as unlimited.")
+    public double chunkLoadRateTarget = 1000.0;
+
+    @ConfigDescription("Fabric, Forge and NeoForge singleplayer only: keep portals, atlas discoveries, Nexus networks, rule templates, backups, and network identity in config/wormholes in the game folder, shared by every singleplayer world, instead of in each world's save folder. Dimensional doors and pocket rooms always stay with their world. Takes effect the next time a world is opened.")
+    public boolean sharedSingleplayerStore = false;
+}

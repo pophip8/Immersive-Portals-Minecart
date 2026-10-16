@@ -1,0 +1,1575 @@
+/*
+ * Iris is a World Generator for Minecraft Bukkit Servers
+ * Copyright (c) 2022 Arcane Arts (Volmit Software)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package art.arcane.volmlib.util.noise;
+
+import art.arcane.volmlib.util.math.Rarity;
+import art.arcane.volmlib.util.cache.FloatCache;
+import art.arcane.volmlib.util.collection.KList;
+import art.arcane.volmlib.util.function.NoiseInjector;
+import art.arcane.volmlib.util.interpolation.IrisInterpolation;
+import art.arcane.volmlib.util.math.RNG;
+import art.arcane.volmlib.util.stream.ProceduralStream;
+import art.arcane.volmlib.util.stream.arithmetic.FittedStream;
+import art.arcane.volmlib.util.stream.sources.CNGStream;
+import lombok.Data;
+import lombok.AccessLevel;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.ToString;
+import art.arcane.volmlib.util.VolmLog;
+
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.lang.ref.WeakReference;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.IdentityHashMap;
+import java.util.Iterator;
+import java.util.List;
+
+@Data
+public class CNG {
+    private static final int UNSIGNED_MEMO_CAPACITY = 64;
+    private static final ThreadLocal<UnsignedMemo> UNSIGNED_MEMO = ThreadLocal.withInitial(UnsignedMemo::new);
+    public static final NoiseInjector ADD = (s, v) -> new double[]{s + v, 1};
+    public static final NoiseInjector SRC_SUBTRACT = (s, v) -> new double[]{s - v < 0 ? 0 : s - v, -1};
+    public static final NoiseInjector DST_SUBTRACT = (s, v) -> new double[]{v - s < 0 ? 0 : s - v, -1};
+    public static final NoiseInjector MULTIPLY = (s, v) -> new double[]{s * v, 0};
+    public static final NoiseInjector MAX = (s, v) -> new double[]{Math.max(s, v), 0};
+    public static final NoiseInjector MIN = (s, v) -> new double[]{Math.min(s, v), 0};
+    public static final NoiseInjector SRC_MOD = (s, v) -> new double[]{s % v, 0};
+    public static final NoiseInjector SRC_POW = (s, v) -> new double[]{Math.pow(s, v), 0};
+    public static final NoiseInjector DST_MOD = (s, v) -> new double[]{v % s, 0};
+    public static final NoiseInjector DST_POW = (s, v) -> new double[]{Math.pow(v, s), 0};
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    @EqualsAndHashCode.Exclude
+    @ToString.Exclude
+    private transient List<WeakReference<CNG>> parents;
+    private final double opacity;
+    private double scale;
+    private double bakedScale;
+    private double fscale;
+    private KList<CNG> children;
+    private CNG fracture;
+    private FloatCache cache;
+    private NoiseGenerator generator;
+    private NoiseInjector injector;
+    private InjectorMode injectorMode;
+    private RNG rng;
+    private boolean noscale;
+    private int oct;
+    private double patch;
+    private double up;
+    private double down;
+    private double power;
+    private ProceduralStream<Double> customGenerator;
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    @EqualsAndHashCode.Exclude
+    @ToString.Exclude
+    private transient boolean unsignedFractureMemoizable;
+    private transient boolean identityPostFastPath;
+    private transient boolean identitySignedFastPath;
+    private transient boolean unityOpacity;
+    private transient double effectiveScale;
+    private transient double signedFractureScale;
+    private transient volatile boolean fastPathStateDirty = true;
+    private transient int coordCacheSalt;
+    private transient Object coordCacheIdentity = new Object();
+
+    public CNG(RNG random) {
+        this(random, 1);
+    }
+
+    public CNG(RNG random, int octaves) {
+        this(random, 1D, octaves);
+    }
+
+    public CNG(RNG random, double opacity, int octaves) {
+        this(random, NoiseType.SIMPLEX, opacity, octaves);
+    }
+
+    public CNG(RNG random, NoiseType type, double opacity, int octaves) {
+        this(random, type.create(random.nextParallelRNG((long) ((1113334944L * opacity) + 12923)).lmax()), opacity, octaves);
+    }
+
+    public CNG(RNG random, NoiseGenerator generator, double opacity, int octaves) {
+        customGenerator = null;
+        noscale = generator.isNoScale();
+        this.oct = octaves;
+        this.rng = random;
+        power = 1;
+        scale = 1;
+        patch = 1;
+        bakedScale = 1;
+        fscale = 1;
+        down = 0;
+        up = 0;
+        fracture = null;
+        this.generator = generator;
+        this.opacity = opacity;
+        this.injector = ADD;
+        this.injectorMode = InjectorMode.ADD;
+        coordCacheSalt = createCoordCacheSalt();
+
+        if (generator instanceof OctaveNoise octaveNoise) {
+            octaveNoise.setOctaves(octaves);
+        }
+
+        refreshFastPathState();
+    }
+
+    public static CNG signature(RNG rng) {
+        return signature(rng, NoiseType.SIMPLEX);
+    }
+
+    public static CNG signatureHalf(RNG rng) {
+        return signatureHalf(rng, NoiseType.SIMPLEX);
+    }
+
+    public static CNG signatureThick(RNG rng) {
+        return signatureThick(rng, NoiseType.SIMPLEX);
+    }
+
+    public static CNG signatureDouble(RNG rng) {
+        return signatureDouble(rng, NoiseType.SIMPLEX);
+    }
+
+    public static CNG signatureDouble(RNG rng, NoiseType t) {
+        return signatureThick(rng, t).fractureWith(signature(rng.nextParallelRNG(4956)), 93);
+    }
+
+    public static CNG signatureDoubleFast(RNG rng, NoiseType t, NoiseType f) {
+        return signatureThickFast(rng, t, f)
+                .fractureWith(signatureFast(rng.nextParallelRNG(4956), t, f), 93);
+    }
+
+    public static CNG signature(RNG rng, NoiseType t) {
+        // @NoArgsConstructor
+        return new CNG(rng.nextParallelRNG(17), t, 1D, 1).fractureWith(new CNG(rng.nextParallelRNG(18), 1, 1).scale(0.9).fractureWith(new CNG(rng.nextParallelRNG(20), 1, 1).scale(0.21).fractureWith(new CNG(rng.nextParallelRNG(20), 1, 1).scale(0.9), 620), 145), 44).bake();
+        // @done
+    }
+
+    public static CNG signaturePerlin(RNG rng) {
+        return signaturePerlin(rng, NoiseType.PERLIN);
+    }
+
+    public static CNG signaturePerlin(RNG rng, NoiseType t) {
+        // @NoArgsConstructor
+        return new CNG(rng.nextParallelRNG(124996), t, 1D, 1)
+                .fractureWith(new CNG(rng.nextParallelRNG(18), NoiseType.PERLIN, 1, 1).scale(1.25), 250)
+                .bake();
+        // @done
+    }
+
+    public static CNG signatureFast(RNG rng, NoiseType t, NoiseType f) {
+        // @NoArgsConstructor
+        return new CNG(rng.nextParallelRNG(17), t, 1D, 1)
+                .fractureWith(new CNG(rng.nextParallelRNG(18), f, 1, 1)
+                        .scale(0.9)
+                        .fractureWith(new CNG(rng.nextParallelRNG(20), f, 1, 1)
+                                .scale(0.21)
+                                .fractureWith(new CNG(rng.nextParallelRNG(20), f, 1, 1).scale(0.9), 620), 145), 44)
+                .bake();
+        // @done
+    }
+
+    public static CNG signatureThick(RNG rng, NoiseType t) {
+        // @NoArgsConstructor
+        return new CNG(rng.nextParallelRNG(133), t, 1D, 1).fractureWith(new CNG(rng.nextParallelRNG(18), 1, 1).scale(0.5).fractureWith(new CNG(rng.nextParallelRNG(20), 1, 1).scale(0.11).fractureWith(new CNG(rng.nextParallelRNG(20), 1, 1).scale(0.4), 620), 145), 44).bake();
+        // @done
+    }
+
+    public static CNG signatureThickFast(RNG rng, NoiseType t, NoiseType f) {
+        // @NoArgsConstructor
+        return new CNG(rng.nextParallelRNG(133), t, 1D, 1)
+                .fractureWith(new CNG(rng.nextParallelRNG(18), f, 1, 1)
+                        .scale(0.5).fractureWith(new CNG(rng.nextParallelRNG(20), f, 1, 1)
+                                .scale(0.11).fractureWith(new CNG(rng.nextParallelRNG(20), f, 1, 1)
+                                        .scale(0.4), 620), 145), 44).bake();
+        // @done
+    }
+
+    public static CNG signatureHalf(RNG rng, NoiseType t) {
+        // @NoArgsConstructor
+        return new CNG(rng.nextParallelRNG(127), t, 1D, 1).fractureWith(new CNG(rng.nextParallelRNG(18), 1, 1).scale(0.9).fractureWith(new CNG(rng.nextParallelRNG(20), 1, 1).scale(0.21).fractureWith(new CNG(rng.nextParallelRNG(20), 1, 1).scale(0.9), 420), 99), 22).bake();
+        // @done
+    }
+
+    public static CNG signatureHalfFast(RNG rng, NoiseType t, NoiseType f) {
+        // @NoArgsConstructor
+        return new CNG(rng.nextParallelRNG(127), t, 1D, 1)
+                .fractureWith(new CNG(rng.nextParallelRNG(18), f, 1, 1).scale(0.9)
+                        .fractureWith(new CNG(rng.nextParallelRNG(20), f, 1, 1).scale(0.21)
+                                .fractureWith(new CNG(rng.nextParallelRNG(20), f, 1, 1).scale(0.9), 420), 99), 22).bake();
+        // @done
+    }
+
+
+
+    public CNG cellularize(RNG seed, double freq) {
+        FastNoise cellularFilter = new FastNoise(seed.imax());
+        cellularFilter.SetNoiseType(FastNoise.NoiseType.Cellular);
+        cellularFilter.SetCellularReturnType(FastNoise.CellularReturnType.CellValue);
+        cellularFilter.SetCellularDistanceFunction(FastNoise.CellularDistanceFunction.Manhattan);
+        cellularFilter.SetFrequency((float) freq * 0.01f);
+
+        ProceduralStream<Double> str = stream();
+
+        return new CNG(seed, new NoiseGenerator() {
+            @Override
+            public double noise(double x) {
+                return noise(x, 0);
+            }
+
+            @Override
+            public double noise(double x, double z) {
+                return (cellularFilter.GetCellular((float) x, (float) z, str, 1) * 0.5) + 0.5D;
+            }
+
+            @Override
+            public double noise(double x, double y, double z) {
+                return noise(x, y + z);
+            }
+        }, 1D, 1);
+    }
+
+    public CNG cached(int size, String key, File cacheFolder) {
+        return cached(size, key, cacheFolder, false);
+    }
+
+    public CNG cached(int size, String key, File cacheFolder, boolean quiet) {
+        if (size <= 0) {
+            return this;
+        }
+
+        markFastPathStateDirty();
+
+        File f = new File(new File(cacheFolder, ".cache"), key + ".cnm");
+        FloatCache fbc;
+        boolean cached = false;
+        if (f.exists()) {
+            try {
+                fbc = new FloatCache(f);
+                cached = true;
+            } catch (IOException e) {
+                fbc = new FloatCache(size, size);
+            }
+        } else {
+            fbc = new FloatCache(size, size);
+        }
+
+        if (!cached) {
+            for (int i = 0; i < size; i++) {
+                for (int j = 0; j < size; j++) {
+                    fbc.set(i, j, (float) noise(i, j));
+                }
+            }
+
+            // Write to a unique temp name (excluded from the *.cnm stale-entry pruner) and
+            // move atomically: a throw mid-write must never leak the descriptor or leave a
+            // truncated .cnm that the read path would pick up by existence alone. The name is
+            // per-writer unique so two engines caching the same style key cannot interleave
+            // into one temp file.
+            File tmp = new File(f.getParentFile(), f.getName() + "." + Long.toUnsignedString(System.nanoTime(), 36)
+                    + "-" + Long.toUnsignedString(Thread.currentThread().getId(), 36) + ".tmp");
+            try {
+                f.getParentFile().mkdirs();
+                try (DataOutputStream dos = new DataOutputStream(new FileOutputStream(tmp))) {
+                    fbc.writeCache(dos);
+                }
+                Files.move(tmp.toPath(), f.toPath(),
+                        StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                if (!quiet) {
+                    VolmLog.info("Noise", "Saved Noise Cache " + f.getName());
+                }
+            } catch (IOException e) {
+                try {
+                    Files.deleteIfExists(tmp.toPath());
+                } catch (IOException ignored) {
+                }
+                throw new RuntimeException(e);
+            }
+        }
+
+        setCache(fbc);
+        return this;
+    }
+
+    public NoiseGenerator getGen() {
+        return generator;
+    }
+
+    public ProceduralStream<Double> stream() {
+        return new CNGStream(this);
+    }
+
+    public ProceduralStream<Double> stream(double min, double max) {
+        return new FittedStream<>(stream(), min, max);
+    }
+
+    public CNG bake() {
+        bakedScale *= scale;
+        scale = 1;
+        markFastPathStateDirty();
+        return this;
+    }
+
+    public CNG child(CNG c) {
+        if (children == null) {
+            children = new KList<>();
+        }
+
+        children.add(c);
+        if (c != null) {
+            c.registerParent(this);
+        }
+        markFastPathStateDirty();
+        return this;
+    }
+
+    public void setScale(double scale) {
+        scale(scale);
+    }
+
+    public void setBakedScale(double bakedScale) {
+        this.bakedScale = bakedScale;
+        markFastPathStateDirty();
+    }
+
+    public void setFscale(double fscale) {
+        this.fscale = fscale;
+        markFastPathStateDirty();
+    }
+
+    public void setChildren(KList<CNG> children) {
+        KList<CNG> previous = this.children;
+        this.children = children;
+        if (previous != null) {
+            for (CNG child : previous) {
+                if (child != null && !referencesChild(child)) {
+                    child.unregisterParent(this);
+                }
+            }
+        }
+        if (children != null) {
+            for (CNG child : children) {
+                if (child != null) {
+                    child.registerParent(this);
+                }
+            }
+        }
+        markFastPathStateDirty();
+    }
+
+    public void setFracture(CNG fracture) {
+        fractureWith(fracture, fscale);
+    }
+
+    public void setCache(FloatCache cache) {
+        markFastPathStateDirty();
+        this.cache = cache;
+    }
+
+    public void setGenerator(NoiseGenerator generator) {
+        this.generator = generator;
+        noscale = generator.isNoScale();
+        if (generator instanceof OctaveNoise octaveNoise) {
+            octaveNoise.setOctaves(oct);
+        }
+        markFastPathStateDirty();
+    }
+
+    public void setInjector(NoiseInjector injector) {
+        injectWith(injector);
+    }
+
+    public void setNoscale(boolean noscale) {
+        this.noscale = noscale;
+        markFastPathStateDirty();
+    }
+
+    public void setOct(int octaves) {
+        oct(octaves);
+    }
+
+    public void setPatch(double patch) {
+        patch(patch);
+    }
+
+    public void setUp(double up) {
+        up(up);
+    }
+
+    public void setDown(double down) {
+        down(down);
+    }
+
+    public void setPower(double power) {
+        pow(power);
+    }
+
+    public void setCustomGenerator(ProceduralStream<Double> customGenerator) {
+        this.customGenerator = customGenerator;
+        markFastPathStateDirty();
+    }
+
+    public RNG getRNG() {
+        return rng;
+    }
+
+    public CNG fractureWith(CNG c, double scale) {
+        CNG previous = fracture;
+        fracture = c;
+        fscale = scale;
+        if (previous != null && !referencesChild(previous)) {
+            previous.unregisterParent(this);
+        }
+        if (c != null) {
+            c.registerParent(this);
+        }
+        markFastPathStateDirty();
+        return this;
+    }
+
+    public CNG scale(double c) {
+        scale = c;
+        markFastPathStateDirty();
+        return this;
+    }
+
+    public CNG zoom(double factor) {
+        if (!Double.isFinite(factor) || factor <= 0D || !Double.isFinite(1D / factor)) {
+            throw new IllegalArgumentException("Zoom must be positive and finite");
+        }
+        if (factor != 1D) {
+            zoom(factor, new IdentityHashMap<>());
+        }
+        return this;
+    }
+
+    public CNG patch(double c) {
+        patch = c;
+        markFastPathStateDirty();
+        return this;
+    }
+
+    public CNG up(double c) {
+        up = c;
+        markFastPathStateDirty();
+        return this;
+    }
+
+    public CNG down(double c) {
+        down = c;
+        markFastPathStateDirty();
+        return this;
+    }
+
+    public CNG injectWith(NoiseInjector i) {
+        injector = i == null ? ADD : i;
+        injectorMode = resolveInjectorMode(injector);
+        markFastPathStateDirty();
+        return this;
+    }
+
+    private InjectorMode resolveInjectorMode(NoiseInjector i) {
+        if (i == ADD) {
+            return InjectorMode.ADD;
+        }
+
+        if (i == SRC_SUBTRACT) {
+            return InjectorMode.SRC_SUBTRACT;
+        }
+
+        if (i == DST_SUBTRACT) {
+            return InjectorMode.DST_SUBTRACT;
+        }
+
+        if (i == MULTIPLY) {
+            return InjectorMode.MULTIPLY;
+        }
+
+        if (i == MAX) {
+            return InjectorMode.MAX;
+        }
+
+        if (i == MIN) {
+            return InjectorMode.MIN;
+        }
+
+        if (i == SRC_MOD) {
+            return InjectorMode.SRC_MOD;
+        }
+
+        if (i == SRC_POW) {
+            return InjectorMode.SRC_POW;
+        }
+
+        if (i == DST_MOD) {
+            return InjectorMode.DST_MOD;
+        }
+
+        if (i == DST_POW) {
+            return InjectorMode.DST_POW;
+        }
+
+        return InjectorMode.CUSTOM;
+    }
+
+    public <T extends Rarity> T fitRarity(KList<T> b, double... dim) {
+        if (dim.length == 2) {
+            return fitRarity2D(b, dim[0], dim[1]);
+        }
+
+        if (b.size() == 0) {
+            return null;
+        }
+
+        if (b.size() == 1) {
+            return b.get(0);
+        }
+
+        KList<T> rarityMapped = buildRarityMapped(b);
+
+        if (rarityMapped.size() == 1) {
+            return rarityMapped.get(0);
+        }
+
+        if (rarityMapped.isEmpty()) {
+            throw new RuntimeException("BAD RARITY MAP! RELATED TO: " + b.toString(", or possibly "));
+        }
+
+        return fit(rarityMapped, dim);
+    }
+
+    public <T extends Rarity> T fitRarity2D(KList<T> b, double x, double z) {
+        if (b.size() == 0) {
+            return null;
+        }
+
+        if (b.size() == 1) {
+            return b.get(0);
+        }
+
+        KList<T> rarityMapped = buildRarityMapped(b);
+        if (rarityMapped.size() == 1) {
+            return rarityMapped.get(0);
+        }
+
+        if (rarityMapped.isEmpty()) {
+            throw new RuntimeException("BAD RARITY MAP! RELATED TO: " + b.toString(", or possibly "));
+        }
+
+        return fit2D(rarityMapped, x, z);
+    }
+
+    private <T extends Rarity> KList<T> buildRarityMapped(KList<T> values) {
+        KList<T> rarityMapped = new KList<>();
+        boolean flip = false;
+        int max = 1;
+        for (T value : values) {
+            if (value.getRarity() > max) {
+                max = value.getRarity();
+            }
+        }
+
+        max++;
+        for (T value : values) {
+            int count = max - value.getRarity();
+            for (int j = 0; j < count; j++) {
+                flip = !flip;
+                if (flip) {
+                    rarityMapped.add(value);
+                } else {
+                    rarityMapped.add(0, value);
+                }
+            }
+        }
+
+        return rarityMapped;
+    }
+
+    public <T> T fit2D(T[] values, double x, double z) {
+        if (values.length == 0) {
+            return null;
+        }
+
+        if (values.length == 1) {
+            return values[0];
+        }
+
+        return values[fit2D(0, values.length - 1, x, z)];
+    }
+
+    public <T> T fit2D(List<T> values, double x, double z) {
+        if (values.isEmpty()) {
+            return null;
+        }
+
+        if (values.size() == 1) {
+            return values.get(0);
+        }
+
+        try {
+            return values.get(fit2D(0, values.size() - 1, x, z));
+        } catch (Throwable e) {
+            VolmLog.severe("Noise", "Failed to select a noise value", e);
+        }
+
+        return values.get(0);
+    }
+
+    public int fit2D(int min, int max, double x, double z) {
+        if (min == max) {
+            return min;
+        }
+
+        double noise = noiseFast2D(x, z);
+        return (int) Math.round(IrisInterpolation.lerp(min, max, noise));
+    }
+
+    public <T> T fit(T[] v, double... dim) {
+        if (v.length == 0) {
+            return null;
+        }
+
+        if (v.length == 1) {
+            return v[0];
+        }
+
+        return v[fit(0, v.length - 1, dim)];
+    }
+
+    public <T> T fit(List<T> v, double... dim) {
+        if (v.size() == 0) {
+            return null;
+        }
+
+        if (v.size() == 1) {
+            return v.get(0);
+        }
+
+        try {
+            return v.get(fit(0, v.size() - 1, dim));
+        } catch (Throwable e) {
+            VolmLog.severe("Noise", "Failed to select a noise value", e);
+        }
+
+        return v.get(0);
+    }
+
+    public int fit(int min, int max, double... dim) {
+        if (min == max) {
+            return min;
+        }
+
+        double noise = noise(dim);
+
+        return (int) Math.round(IrisInterpolation.lerp(min, max, noise));
+    }
+
+    public int fit(int min, int max, double x, double z) {
+        return fit2D(min, max, x, z);
+    }
+
+    public int fit(int min, int max, double x, double y, double z) {
+        if (min == max) {
+            return min;
+        }
+
+        double noise = noise(x, y, z);
+
+        return (int) Math.round(IrisInterpolation.lerp(min, max, noise));
+    }
+
+    public int fit(double min, double max, double... dim) {
+        if (min == max) {
+            return (int) Math.round(min);
+        }
+
+        double noise = noise(dim);
+
+        return (int) Math.round(IrisInterpolation.lerp(min, max, noise));
+    }
+
+    public int fit(double min, double max, double x, double z) {
+        if (min == max) {
+            return (int) Math.round(min);
+        }
+
+        double noise = noiseFast2D(x, z);
+
+        return (int) Math.round(IrisInterpolation.lerp(min, max, noise));
+    }
+
+    public int fit(double min, double max, double x, double y, double z) {
+        if (min == max) {
+            return (int) Math.round(min);
+        }
+
+        double noise = noise(x, y, z);
+
+        return (int) Math.round(IrisInterpolation.lerp(min, max, noise));
+    }
+
+    public double fitDouble(double min, double max, double... dim) {
+        if (min == max) {
+            return min;
+        }
+
+        double noise = noise(dim);
+
+        return IrisInterpolation.lerp(min, max, noise);
+    }
+
+    public double fitDouble(double min, double max, double x, double z) {
+        if (min == max) {
+            return min;
+        }
+
+        double noise = noise(x, z);
+
+        return IrisInterpolation.lerp(min, max, noise);
+    }
+
+    public double fitDouble(double min, double max, double x, double y, double z) {
+        if (min == max) {
+            return min;
+        }
+
+        double noise = noise(x, y, z);
+
+        return IrisInterpolation.lerp(min, max, noise);
+    }
+
+    private double getNoise(double x) {
+        ensureFastPathState();
+        double scl = effectiveScale;
+
+        if (fracture == null || noscale) {
+            return generator.noise(x * scl) * opacity;
+        }
+
+        double fx = x + ((fracture.noiseFast1D(x) - 0.5D) * fscale);
+        return generator.noise(fx * scl) * opacity;
+    }
+
+    private double getNoise(double x, double z) {
+        return getNoise(x, z, null);
+    }
+
+    private double getNoise(double x, double z, UnsignedMemo memo) {
+        ensureFastPathState();
+        double scl = effectiveScale;
+
+        if (fracture == null || noscale) {
+            return generator.noise(x * scl, z * scl) * opacity;
+        }
+
+        double fractureX = memo == null ? fracture.noiseFast2D(x, z) : fracture.memoizedNoise2D(x, z, memo);
+        double fx = x + ((fractureX - 0.5D) * fscale);
+        double fractureZ = memo == null ? fracture.noiseFast2D(z, x) : fracture.memoizedNoise2D(z, x, memo);
+        double fz = z + ((fractureZ - 0.5D) * fscale);
+        return generator.noise(fx * scl, fz * scl) * opacity;
+    }
+
+    private double getNoise(double x, double y, double z) {
+        ensureFastPathState();
+        double scl = effectiveScale;
+
+        if (fracture == null || noscale) {
+            return generator.noise(x * scl, y * scl, z * scl) * opacity;
+        }
+
+        double fx = x + ((fracture.noiseFast3D(x, y, z) - 0.5D) * fscale);
+        double fy = y + ((fracture.noiseFast2D(y, x) - 0.5D) * fscale);
+        double fz = z + ((fracture.noiseFast3D(z, x, y) - 0.5D) * fscale);
+        return generator.noise(fx * scl, fy * scl, fz * scl) * opacity;
+    }
+
+    public double invertNoise(double... dim) {
+        if (dim.length == 1) {
+            return noise(-dim[0]);
+        } else if (dim.length == 2) {
+            return noise(dim[1], dim[0]);
+        } else if (dim.length == 3) {
+            return noise(dim[1], dim[2], dim[0]);
+        }
+
+        return noise(dim);
+    }
+
+    public double noiseSym(double... dim) {
+        return (noise(dim) * 2) - 1;
+    }
+
+    private boolean isCachedCoordinate(double x, double z) {
+        return cache != null
+                && x >= 0D && x < cache.getWidth()
+                && z >= 0D && z < cache.getHeight()
+                && x == (int) x && z == (int) z;
+    }
+
+    private double getCachedNoise(double x, double z) {
+        return cache.get((int) z * cache.getWidth() + (int) x);
+    }
+
+    private double applyPost(double n, double x) {
+        n = power != 1D ? (n < 0 ? -Math.pow(Math.abs(n), power) : Math.pow(n, power)) : n;
+        double m = 1;
+
+        if (children != null) {
+            for (CNG i : children) {
+                double source = n;
+                double value = i.noise(x);
+                switch (injectorMode) {
+                    case ADD -> {
+                        n = source + value;
+                        m += 1D;
+                    }
+                    case SRC_SUBTRACT -> {
+                        n = source - value < 0D ? 0D : source - value;
+                        m -= 1D;
+                    }
+                    case DST_SUBTRACT -> {
+                        n = value - source < 0D ? 0D : source - value;
+                        m -= 1D;
+                    }
+                    case MULTIPLY -> n = source * value;
+                    case MAX -> n = Math.max(source, value);
+                    case MIN -> n = Math.min(source, value);
+                    case SRC_MOD -> n = source % value;
+                    case SRC_POW -> n = Math.pow(source, value);
+                    case DST_MOD -> n = value % source;
+                    case DST_POW -> n = Math.pow(value, source);
+                    case CUSTOM -> {
+                        double[] combined = injector.combine(source, value);
+                        n = combined[0];
+                        m += combined[1];
+                    }
+                }
+            }
+        }
+
+        return ((n / m) - down + up) * patch;
+    }
+
+    private double applyPost(double n, double x, double z) {
+        n = power != 1D ? (n < 0 ? -Math.pow(Math.abs(n), power) : Math.pow(n, power)) : n;
+        double m = 1;
+
+        if (children != null) {
+            for (CNG i : children) {
+                double source = n;
+                double value = i.noise(x, z);
+                switch (injectorMode) {
+                    case ADD -> {
+                        n = source + value;
+                        m += 1D;
+                    }
+                    case SRC_SUBTRACT -> {
+                        n = source - value < 0D ? 0D : source - value;
+                        m -= 1D;
+                    }
+                    case DST_SUBTRACT -> {
+                        n = value - source < 0D ? 0D : source - value;
+                        m -= 1D;
+                    }
+                    case MULTIPLY -> n = source * value;
+                    case MAX -> n = Math.max(source, value);
+                    case MIN -> n = Math.min(source, value);
+                    case SRC_MOD -> n = source % value;
+                    case SRC_POW -> n = Math.pow(source, value);
+                    case DST_MOD -> n = value % source;
+                    case DST_POW -> n = Math.pow(value, source);
+                    case CUSTOM -> {
+                        double[] combined = injector.combine(source, value);
+                        n = combined[0];
+                        m += combined[1];
+                    }
+                }
+            }
+        }
+
+        return ((n / m) - down + up) * patch;
+    }
+
+    private double applyPost(double n, double x, double y, double z) {
+        n = power != 1D ? (n < 0 ? -Math.pow(Math.abs(n), power) : Math.pow(n, power)) : n;
+        double m = 1;
+
+        if (children != null) {
+            for (CNG i : children) {
+                double source = n;
+                double value = i.noise(x, y, z);
+                switch (injectorMode) {
+                    case ADD -> {
+                        n = source + value;
+                        m += 1D;
+                    }
+                    case SRC_SUBTRACT -> {
+                        n = source - value < 0D ? 0D : source - value;
+                        m -= 1D;
+                    }
+                    case DST_SUBTRACT -> {
+                        n = value - source < 0D ? 0D : source - value;
+                        m -= 1D;
+                    }
+                    case MULTIPLY -> n = source * value;
+                    case MAX -> n = Math.max(source, value);
+                    case MIN -> n = Math.min(source, value);
+                    case SRC_MOD -> n = source % value;
+                    case SRC_POW -> n = Math.pow(source, value);
+                    case DST_MOD -> n = value % source;
+                    case DST_POW -> n = Math.pow(value, source);
+                    case CUSTOM -> {
+                        double[] combined = injector.combine(source, value);
+                        n = combined[0];
+                        m += combined[1];
+                    }
+                }
+            }
+        }
+
+        return ((n / m) - down + up) * patch;
+    }
+
+    public double noise(double... dim) {
+        return switch (dim.length) {
+            case 1 -> noise(dim[0]);
+            case 2 -> noise(dim[0], dim[1]);
+            case 3 -> noise(dim[0], dim[1], dim[2]);
+            default -> throw new IllegalArgumentException("Noise requires one, two, or three coordinates");
+        };
+    }
+
+    public double noise(double x) {
+        return applyPost(getNoise(x), x);
+    }
+
+    public double noiseFast1D(double x) {
+        return applyPost(getNoise(x), x);
+    }
+
+    public double noise(double x, double z) {
+        if (fracture != null && fracture.fracture != null && canMemoizeUnsignedFracture()) {
+            return sampleUnsignedRoot2D(x, z);
+        }
+        if (isCachedCoordinate(x, z)) {
+            return getCachedNoise(x, z);
+        }
+
+        return applyPost(getNoise(x, z), x, z);
+    }
+
+    public double noiseFast2D(double x, double z) {
+        return sampleUnsignedRoot2D(x, z);
+    }
+
+    private double sampleUnsignedRoot2D(double x, double z) {
+        if (fracture == null || fracture.fracture == null || !canMemoizeUnsignedFracture()) {
+            return sampleUnsigned2D(x, z, null);
+        }
+        UnsignedMemo memo = UNSIGNED_MEMO.get();
+        if (memo.active) {
+            return sampleUnsigned2D(x, z, null);
+        }
+        memo.active = true;
+        try {
+            return sampleUnsigned2D(x, z, memo);
+        } finally {
+            memo.clear();
+        }
+    }
+
+    private double sampleUnsigned2D(double x, double z, UnsignedMemo memo) {
+        if (isCachedCoordinate(x, z)) {
+            return getCachedNoise(x, z);
+        }
+
+        if (isIdentityPostFastPath()) {
+            return getNoise(x, z, memo);
+        }
+
+        return applyPost(getNoise(x, z, memo), x, z);
+    }
+
+    private double memoizedNoise2D(double x, double z, UnsignedMemo memo) {
+        long bx = Double.doubleToRawLongBits(x);
+        long bz = Double.doubleToRawLongBits(z);
+        int slot = memo.slot(this, bx, bz);
+        if (memo.owners[slot] != null) {
+            return memo.values[slot];
+        }
+        double value = sampleUnsigned2D(x, z, memo);
+        if (memo.size < UNSIGNED_MEMO_CAPACITY) {
+            slot = memo.slot(this, bx, bz);
+            if (memo.owners[slot] == null) {
+                memo.touched[memo.size++] = slot;
+            }
+            memo.owners[slot] = this;
+            memo.xs[slot] = bx;
+            memo.zs[slot] = bz;
+            memo.values[slot] = value;
+        }
+        return value;
+    }
+
+    private boolean canMemoizeUnsignedFracture() {
+        ensureFastPathState();
+        return unsignedFractureMemoizable;
+    }
+
+    private boolean computeUnsignedMemoEligibility() {
+        CNG node = this;
+        for (int depth = 0; depth < 4; depth++) {
+            node = node.fracture;
+            if (node == null) {
+                return false;
+            }
+        }
+        node = this;
+        for (int depth = 0; depth < UNSIGNED_MEMO_CAPACITY; depth++) {
+            if (node.getClass() != CNG.class || node.noscale || node.children != null || node.cache != null
+                    || node.customGenerator != null || node.injector != ADD || !pureUnsignedBase(node.generator)) {
+                return false;
+            }
+            node = node.fracture;
+            if (node == null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean pureUnsignedBase(NoiseGenerator generator) {
+        if (generator == null) {
+            return false;
+        }
+        for (int depth = 0; depth < UNSIGNED_MEMO_CAPACITY; depth++) {
+            Class<?> type = generator.getClass();
+            if (type == OffsetNoiseGenerator.class) {
+                generator = ((OffsetNoiseGenerator) generator).getBase();
+            } else {
+                return type == SimplexNoise.class || type == PerlinNoise.class
+                        || type == FractalBillowSimplexNoise.class || type == FractalFBMSimplexNoise.class;
+            }
+        }
+        return false;
+    }
+
+    private static final class UnsignedMemo {
+        private final CNG[] owners = new CNG[UNSIGNED_MEMO_CAPACITY * 2];
+        private final long[] xs = new long[UNSIGNED_MEMO_CAPACITY * 2];
+        private final long[] zs = new long[UNSIGNED_MEMO_CAPACITY * 2];
+        private final double[] values = new double[UNSIGNED_MEMO_CAPACITY * 2];
+        private final int[] touched = new int[UNSIGNED_MEMO_CAPACITY];
+        private int size;
+        private boolean active;
+
+        private int slot(CNG owner, long x, long z) {
+            long hash = x * 0x9E3779B97F4A7C15L ^ z * 0xC2B2AE3D27D4EB4FL
+                    ^ System.identityHashCode(owner) * 0x165667B19E3779F9L;
+            hash ^= hash >>> 33;
+            hash *= 0xFF51AFD7ED558CCDL;
+            hash ^= hash >>> 33;
+            int slot = (int) hash & (owners.length - 1);
+            while (owners[slot] != null && (owners[slot] != owner || xs[slot] != x || zs[slot] != z)) {
+                slot = (slot + 1) & (owners.length - 1);
+            }
+            return slot;
+        }
+
+        private void clear() {
+            for (int index = 0; index < size; index++) {
+                owners[touched[index]] = null;
+            }
+            size = 0;
+            active = false;
+        }
+    }
+
+    private static final int COORD_CACHE_SIZE = 1 << 16;
+    private static final int COORD_CACHE_MASK = COORD_CACHE_SIZE - 1;
+    private static final int SIGNED_MEMO_CAPACITY = 128;
+    private static final ThreadLocal<SignedCaches> SIGNED_CACHES = ThreadLocal.withInitial(SignedCaches::new);
+
+    /**
+     * Per-thread signed-noise caches. The coordinate tables keep root results across calls (key words and the
+     * raw value bits interleaved, so a probe touches two cache lines instead of five). Fracture levels below a
+     * root repeat only the rotated coordinates of that one sample, so they use a small memo that lives for one
+     * root call and stays in L1.
+     */
+    private static final class SignedCaches {
+        private Object[] owners2D;
+        private long[] entries2D;
+        private Object[] owners3D;
+        private long[] entries3D;
+        private final SignedMemo memo2D = new SignedMemo();
+        private final SignedMemo memo3D = new SignedMemo();
+        private boolean active;
+
+        private void clearMemos() {
+            memo2D.clear();
+            memo3D.clear();
+            active = false;
+        }
+    }
+
+    private static final class SignedMemo {
+        private final Object[] owners = new Object[SIGNED_MEMO_CAPACITY * 2];
+        private final long[] keys = new long[SIGNED_MEMO_CAPACITY * 6];
+        private final double[] values = new double[SIGNED_MEMO_CAPACITY * 2];
+        private final int[] touched = new int[SIGNED_MEMO_CAPACITY];
+        private int size;
+
+        private int slot(Object owner, int salt, long x, long y, long z) {
+            long hash = x * 0x9E3779B97F4A7C15L ^ y * 0xD6E8FEB86659FD93L ^ z * 0xC2B2AE3D27D4EB4FL
+                    ^ salt * 0x165667B19E3779F9L;
+            hash ^= hash >>> 33;
+            hash *= 0xFF51AFD7ED558CCDL;
+            hash ^= hash >>> 33;
+            int slot = (int) hash & (owners.length - 1);
+            while (owners[slot] != null
+                    && (owners[slot] != owner || keys[slot * 3] != x || keys[slot * 3 + 1] != y || keys[slot * 3 + 2] != z)) {
+                slot = (slot + 1) & (owners.length - 1);
+            }
+            return slot;
+        }
+
+        private void store(Object owner, int salt, long x, long y, long z, double value) {
+            if (size >= SIGNED_MEMO_CAPACITY) {
+                return;
+            }
+            int slot = slot(owner, salt, x, y, z);
+            if (owners[slot] != null) {
+                return;
+            }
+            touched[size++] = slot;
+            owners[slot] = owner;
+            keys[slot * 3] = x;
+            keys[slot * 3 + 1] = y;
+            keys[slot * 3 + 2] = z;
+            values[slot] = value;
+        }
+
+        private void clear() {
+            for (int index = 0; index < size; index++) {
+                owners[touched[index]] = null;
+            }
+            size = 0;
+        }
+    }
+
+    private static int coordSlot(long a, long b, int salt) {
+        long h = (a * 0x9E3779B97F4A7C15L) ^ (b * 0xC2B2AE3D27D4EB4FL) ^ (salt * 0x165667B19E3779F9L);
+        h ^= h >>> 33;
+        h *= 0xFF51AFD7ED558CCDL;
+        h ^= h >>> 33;
+        return (int) (h & COORD_CACHE_MASK);
+    }
+
+    public double noiseFastSigned2D(double x, double z) {
+        long kx = Double.doubleToRawLongBits(x);
+        long kz = Double.doubleToRawLongBits(z);
+        SignedCaches caches = SIGNED_CACHES.get();
+        Object identity = coordCacheIdentity();
+        int slot = coordSlot(kx, kz, coordCacheSalt());
+        int entry = slot << 2;
+        if (caches.entries2D == null) {
+            caches.owners2D = new Object[COORD_CACHE_SIZE];
+            caches.entries2D = new long[COORD_CACHE_SIZE * 4];
+        }
+        long[] entries = caches.entries2D;
+        if (caches.owners2D[slot] == identity && entries[entry] == kx && entries[entry + 1] == kz) {
+            return Double.longBitsToDouble(entries[entry + 2]);
+        }
+        boolean root = !caches.active;
+        caches.active = true;
+        double computed;
+        try {
+            computed = computeNoiseFastSigned2D(x, z, caches);
+        } finally {
+            if (root) {
+                caches.clearMemos();
+            }
+        }
+        caches.owners2D[slot] = identity;
+        entries[entry] = kx;
+        entries[entry + 1] = kz;
+        entries[entry + 2] = Double.doubleToRawLongBits(computed);
+        return computed;
+    }
+
+    private double fractureSigned2D(double x, double z, SignedCaches caches) {
+        if (getClass() != CNG.class) {
+            return noiseFastSigned2D(x, z);
+        }
+        long kx = Double.doubleToRawLongBits(x);
+        long kz = Double.doubleToRawLongBits(z);
+        SignedMemo memo = caches.memo2D;
+        Object identity = coordCacheIdentity();
+        int salt = coordCacheSalt();
+        int slot = memo.slot(identity, salt, kx, 0L, kz);
+        if (memo.owners[slot] != null) {
+            return memo.values[slot];
+        }
+        double computed = computeNoiseFastSigned2D(x, z, caches);
+        memo.store(identity, salt, kx, 0L, kz, computed);
+        return computed;
+    }
+
+    private double computeNoiseFastSigned2D(double x, double z, SignedCaches caches) {
+        if (isCachedCoordinate(x, z)) {
+            return (getCachedNoise(x, z) * 2D) - 1D;
+        }
+
+        if (hasIdentitySignedFastPath()) {
+            return getSignedNoise(x, z, caches);
+        }
+
+        return (noiseFast2D(x, z) * 2D) - 1D;
+    }
+
+    public double noise(double x, double y, double z) {
+        return applyPost(getNoise(x, y, z), x, y, z);
+    }
+
+    public double noiseFast3D(double x, double y, double z) {
+        if (isIdentityPostFastPath()) {
+            return getNoise(x, y, z);
+        }
+
+        return applyPost(getNoise(x, y, z), x, y, z);
+    }
+
+    public double noiseFastSigned3D(double x, double y, double z) {
+        long kx = Double.doubleToRawLongBits(x);
+        long ky = Double.doubleToRawLongBits(y);
+        long kz = Double.doubleToRawLongBits(z);
+        SignedCaches caches = SIGNED_CACHES.get();
+        Object identity = coordCacheIdentity();
+        int slot = coordSlot(kx ^ Long.rotateLeft(ky, 21), kz, coordCacheSalt());
+        int entry = slot << 2;
+        if (caches.entries3D == null) {
+            caches.owners3D = new Object[COORD_CACHE_SIZE];
+            caches.entries3D = new long[COORD_CACHE_SIZE * 4];
+        }
+        long[] entries = caches.entries3D;
+        if (caches.owners3D[slot] == identity && entries[entry] == kx && entries[entry + 1] == ky
+                && entries[entry + 2] == kz) {
+            return Double.longBitsToDouble(entries[entry + 3]);
+        }
+        boolean root = !caches.active;
+        caches.active = true;
+        double computed;
+        try {
+            computed = computeNoiseFastSigned3D(x, y, z, caches);
+        } finally {
+            if (root) {
+                caches.clearMemos();
+            }
+        }
+        caches.owners3D[slot] = identity;
+        entries[entry] = kx;
+        entries[entry + 1] = ky;
+        entries[entry + 2] = kz;
+        entries[entry + 3] = Double.doubleToRawLongBits(computed);
+        return computed;
+    }
+
+    private double fractureSigned3D(double x, double y, double z, SignedCaches caches) {
+        if (getClass() != CNG.class) {
+            return noiseFastSigned3D(x, y, z);
+        }
+        long kx = Double.doubleToRawLongBits(x);
+        long ky = Double.doubleToRawLongBits(y);
+        long kz = Double.doubleToRawLongBits(z);
+        SignedMemo memo = caches.memo3D;
+        Object identity = coordCacheIdentity();
+        int salt = coordCacheSalt();
+        int slot = memo.slot(identity, salt, kx, ky, kz);
+        if (memo.owners[slot] != null) {
+            return memo.values[slot];
+        }
+        double computed = computeNoiseFastSigned3D(x, y, z, caches);
+        memo.store(identity, salt, kx, ky, kz, computed);
+        return computed;
+    }
+
+    private double computeNoiseFastSigned3D(double x, double y, double z, SignedCaches caches) {
+        return hasIdentitySignedFastPath() ? getSignedNoise(x, y, z, caches) : (noiseFast3D(x, y, z) * 2D) - 1D;
+    }
+
+    public CNG pow(double power) {
+        this.power = power;
+        markFastPathStateDirty();
+        return this;
+    }
+
+    public CNG oct(int octaves) {
+        if (oct == octaves) {
+            return this;
+        }
+
+        oct = octaves;
+        if (generator instanceof OctaveNoise octaveNoise) {
+            octaveNoise.setOctaves(octaves);
+        }
+        markFastPathStateDirty();
+        return this;
+    }
+
+    public double getScale() {
+        return scale;
+    }
+
+    public boolean isStatic() {
+        return generator != null && generator.isStatic();
+    }
+
+    /**
+     * True when every sample is the same value: the base generator ignores its coordinates and no
+     * child mixes in another field. A fracture only moves the coordinates, so it cannot change that.
+     */
+    public boolean isConstant() {
+        return getClass() == CNG.class && generator != null && generator.isConstant()
+                && (children == null || children.isEmpty());
+    }
+
+    private boolean isIdentityPostFastPath() {
+        ensureFastPathState();
+        return identityPostFastPath;
+    }
+
+    private boolean hasIdentitySignedFastPath() {
+        ensureFastPathState();
+        return identitySignedFastPath;
+    }
+
+    private void zoom(double factor, IdentityHashMap<CNG, Boolean> visited) {
+        if (visited.put(this, Boolean.TRUE) != null) {
+            return;
+        }
+        bakedScale /= factor;
+        fscale *= factor;
+        if (fracture != null) {
+            fracture.zoom(factor, visited);
+        }
+        if (children != null) {
+            for (CNG child : children) {
+                child.zoom(factor, visited);
+            }
+        }
+        markFastPathStateDirty();
+    }
+
+    private void ensureFastPathState() {
+        if (fastPathStateDirty) {
+            refreshFastPathState();
+        }
+    }
+
+    private void markFastPathStateDirty() {
+        invalidateLocalState();
+        List<CNG> ancestors = liveParents();
+        if (ancestors.isEmpty()) {
+            return;
+        }
+        IdentityHashMap<CNG, Boolean> visited = new IdentityHashMap<>();
+        visited.put(this, Boolean.TRUE);
+        for (CNG parent : ancestors) {
+            parent.invalidateAncestors(visited);
+        }
+    }
+
+    private void invalidateAncestors(IdentityHashMap<CNG, Boolean> visited) {
+        if (visited.put(this, Boolean.TRUE) != null) {
+            return;
+        }
+        invalidateLocalState();
+        for (CNG parent : liveParents()) {
+            parent.invalidateAncestors(visited);
+        }
+    }
+
+    private void invalidateLocalState() {
+        fastPathStateDirty = true;
+        cache = null;
+        coordCacheIdentity = new Object();
+    }
+
+    private boolean referencesChild(CNG candidate) {
+        if (fracture == candidate) {
+            return true;
+        }
+        if (children != null) {
+            for (CNG child : children) {
+                if (child == candidate) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private void registerParent(CNG parent) {
+        if (parents == null) {
+            parents = new ArrayList<>(1);
+        }
+        Iterator<WeakReference<CNG>> iterator = parents.iterator();
+        while (iterator.hasNext()) {
+            CNG existing = iterator.next().get();
+            if (existing == parent) {
+                return;
+            }
+            if (existing == null) {
+                iterator.remove();
+            }
+        }
+        parents.add(new WeakReference<>(parent));
+    }
+
+    private void unregisterParent(CNG parent) {
+        if (parents == null) {
+            return;
+        }
+        parents.removeIf(reference -> reference.get() == null || reference.get() == parent);
+        if (parents.isEmpty()) {
+            parents = null;
+        }
+    }
+
+    private List<CNG> liveParents() {
+        if (parents == null) {
+            return List.of();
+        }
+        List<CNG> live = new ArrayList<>(parents.size());
+        Iterator<WeakReference<CNG>> iterator = parents.iterator();
+        while (iterator.hasNext()) {
+            CNG parent = iterator.next().get();
+            if (parent == null) {
+                iterator.remove();
+            } else {
+                live.add(parent);
+            }
+        }
+        if (parents.isEmpty()) {
+            parents = null;
+        }
+        return live;
+    }
+
+    private Object coordCacheIdentity() {
+        if (coordCacheIdentity == null) {
+            coordCacheIdentity = new Object();
+        }
+
+        return coordCacheIdentity;
+    }
+
+    private int coordCacheSalt() {
+        if (coordCacheSalt == 0) {
+            coordCacheSalt = createCoordCacheSalt();
+        }
+
+        return coordCacheSalt;
+    }
+
+    private int createCoordCacheSalt() {
+        int salt = System.identityHashCode(this);
+        return salt == 0 ? 1 : salt;
+    }
+
+    private void refreshFastPathState() {
+        effectiveScale = noscale ? 1D : bakedScale * scale;
+        identityPostFastPath = power == 1D
+                && children == null
+                && fracture == null
+                && down == 0D
+                && up == 0D
+                && patch == 1D;
+        identitySignedFastPath = power == 1D
+                && children == null
+                && down == 0D
+                && up == 0D
+                && patch == 1D;
+        unityOpacity = opacity == 1D;
+        signedFractureScale = 0.5D * fscale;
+        unsignedFractureMemoizable = computeUnsignedMemoEligibility();
+        fastPathStateDirty = false;
+    }
+
+    private double signedWithOpacity(double signedNoise) {
+        if (unityOpacity) {
+            return signedNoise;
+        }
+
+        return ((signedNoise + 1D) * opacity) - 1D;
+    }
+
+    private double getSignedNoise(double x, double z, SignedCaches caches) {
+        double scl = effectiveScale;
+        NoiseGenerator localGenerator = generator;
+        CNG localFracture = fracture;
+
+        if (localFracture == null || noscale) {
+            return signedWithOpacity(localGenerator.noiseSigned(x * scl, z * scl));
+        }
+
+        double fx = x + (localFracture.fractureSigned2D(x, z, caches) * signedFractureScale);
+        double fz = z + (localFracture.fractureSigned2D(z, x, caches) * signedFractureScale);
+        return signedWithOpacity(localGenerator.noiseSigned(fx * scl, fz * scl));
+    }
+
+    private double getSignedNoise(double x, double y, double z, SignedCaches caches) {
+        double scl = effectiveScale;
+        NoiseGenerator localGenerator = generator;
+        CNG localFracture = fracture;
+
+        if (localFracture == null || noscale) {
+            return signedWithOpacity(localGenerator.noiseSigned(x * scl, y * scl, z * scl));
+        }
+
+        double fx = x + (localFracture.fractureSigned3D(x, y, z, caches) * signedFractureScale);
+        double fy = y + (localFracture.fractureSigned2D(y, x, caches) * signedFractureScale);
+        double fz = z + (localFracture.fractureSigned3D(z, x, y, caches) * signedFractureScale);
+        return signedWithOpacity(localGenerator.noiseSigned(fx * scl, fy * scl, fz * scl));
+    }
+
+    private enum InjectorMode {
+        ADD,
+        SRC_SUBTRACT,
+        DST_SUBTRACT,
+        MULTIPLY,
+        MAX,
+        MIN,
+        SRC_MOD,
+        SRC_POW,
+        DST_MOD,
+        DST_POW,
+        CUSTOM
+    }
+}

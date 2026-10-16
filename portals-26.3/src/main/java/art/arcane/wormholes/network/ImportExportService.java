@@ -1,0 +1,218 @@
+package art.arcane.wormholes.network;
+
+import art.arcane.volmlib.util.scheduling.FoliaScheduler;
+import art.arcane.volmlib.util.localization.MessageArgument;
+import art.arcane.wormholes.Wormholes;
+import art.arcane.wormholes.config.toml.NetworkConfig;
+import art.arcane.wormholes.localization.WormholesLocalization;
+import art.arcane.wormholes.localization.WormholesMessages;
+import art.arcane.wormholes.portal.ILocalPortal;
+import art.arcane.wormholes.service.WormholesAudience;
+
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.event.ClickEvent;
+import net.kyori.adventure.text.event.HoverEvent;
+import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Player;
+
+
+public final class ImportExportService {
+    private static final int CHAT_SAFE_CODE_LENGTH = 250;
+
+    private final NetworkManager network;
+    private final NetworkPairingService pairing;
+
+    public ImportExportService(NetworkManager network) {
+        this.network = network;
+        this.pairing = new NetworkPairingService(network);
+    }
+
+    public void exportToChat(Player player, ILocalPortal portal) {
+        WormholesAudience.sendMessage(player, Wormholes.text().component(player, WormholesMessages.NETWORK_BUILDING_CODE));
+        FoliaScheduler.runAsync(Wormholes.instance, () -> exportNow(player, portal));
+    }
+
+    public void exportServerToChat(CommandSender sender) {
+        WormholesAudience.sendMessage(sender, Wormholes.text().component(sender, WormholesMessages.NETWORK_BUILDING_CODE));
+        FoliaScheduler.runAsync(Wormholes.instance, () -> exportServerNow(sender));
+    }
+
+    public void importCode(CommandSender sender, ILocalPortal portal, String raw) {
+        FoliaScheduler.runAsync(Wormholes.instance, () -> importNow(sender, portal, raw));
+    }
+
+    private void exportNow(Player player, ILocalPortal portal) {
+        NetworkConfig config = Wormholes.settings.getNetwork();
+        resolveAdvertiseHost(player, config);
+        boolean configChanged = false;
+        if (!config.enabled) {
+            config.enabled = true;
+            configChanged = true;
+        }
+        if (configChanged) {
+            persistConfig(config);
+        }
+        if (!network.isRunning()) {
+            network.start();
+        }
+
+        PortalCode code = pairing.portalCode(portal.getId(), portal.getName());
+        String encoded = code.encode();
+
+        Component message = Wormholes.text().component(
+                WormholesMessages.NETWORK_COPY_CODE,
+                WormholesLocalization.args(MessageArgument.untrusted("portal", portal.getName())))
+            .clickEvent(ClickEvent.copyToClipboard(encoded))
+            .hoverEvent(HoverEvent.showText(Wormholes.text().component(WormholesMessages.NETWORK_COPY_CODE_HOVER)));
+        WormholesAudience.sendMessage(player, message);
+        WormholesAudience.sendMessage(player, Wormholes.text().component(player,
+                WormholesMessages.NETWORK_CODE_FINGERPRINT,
+                WormholesLocalization.args(MessageArgument.untrusted("fingerprint", network.getPublicKeyFingerprint()))));
+        if (encoded.length() > CHAT_SAFE_CODE_LENGTH) {
+            WormholesAudience.sendMessage(player, Wormholes.text().component(player, WormholesMessages.NETWORK_CODE_TOO_LONG));
+        }
+    }
+
+    private void exportServerNow(CommandSender sender) {
+        NetworkConfig config = Wormholes.settings.getNetwork();
+        resolveAdvertiseHost(sender, config);
+        if (!config.enabled) {
+            config.enabled = true;
+            persistConfig(config);
+        }
+        if (!network.isRunning()) {
+            network.start();
+        }
+
+        ServerCode code = pairing.serverCode();
+        String encoded = code.encode();
+
+        if (sender instanceof Player) {
+            Component message = Wormholes.text().component(
+                    WormholesMessages.SERVER_COPY_CODE,
+                    WormholesLocalization.args(MessageArgument.untrusted("server", network.getLocalName())))
+                .clickEvent(ClickEvent.copyToClipboard(encoded))
+                .hoverEvent(HoverEvent.showText(Wormholes.text().component(WormholesMessages.SERVER_COPY_CODE_HOVER)));
+            WormholesAudience.sendMessage(sender, message);
+        } else {
+            WormholesAudience.sendMessage(sender, Wormholes.text().component(sender,
+                    WormholesMessages.SERVER_CODE_RAW,
+                    WormholesLocalization.args(MessageArgument.untrusted("code", encoded))));
+        }
+        WormholesAudience.sendMessage(sender, Wormholes.text().component(sender,
+                WormholesMessages.NETWORK_CODE_FINGERPRINT,
+                WormholesLocalization.args(MessageArgument.untrusted("fingerprint", network.getPublicKeyFingerprint()))));
+        if (encoded.length() > CHAT_SAFE_CODE_LENGTH) {
+            WormholesAudience.sendMessage(sender, Wormholes.text().component(sender, WormholesMessages.NETWORK_CODE_TOO_LONG));
+        }
+    }
+
+    private void importNow(CommandSender sender, ILocalPortal portal, String raw) {
+        ServerCode serverCode = ServerCode.decode(raw);
+        if (serverCode != null) {
+            importServerNow(sender, serverCode);
+            return;
+        }
+        PortalCode code = PortalCode.decode(raw);
+        if (code == null) {
+            WormholesAudience.sendMessage(sender, Wormholes.text().component(sender,
+                    WormholesMessages.NETWORK_CODE_INVALID,
+                    WormholesLocalization.args(MessageArgument.untrusted("prefix", PortalCode.PREFIX + " or " + ServerCode.PREFIX))));
+            return;
+        }
+
+        if (code.serverName().equals(network.getLocalName())) {
+            boolean ownPortal = Wormholes.portalManager != null && Wormholes.portalManager.getLocalPortal(code.portalId()) != null;
+            if (ownPortal) {
+                WormholesAudience.sendMessage(sender, Wormholes.text().component(sender, WormholesMessages.NETWORK_CODE_SAME_SERVER));
+            } else {
+                WormholesAudience.sendMessage(sender, Wormholes.text().component(sender,
+                        WormholesMessages.NETWORK_CODE_SAME_IDENTITY,
+                        WormholesLocalization.args(MessageArgument.untrusted("server", code.serverName()))));
+            }
+            return;
+        }
+
+        pairing.importPortal(code);
+        enableAndStart();
+
+        if (portal != null) {
+            FoliaScheduler.runRegion(Wormholes.instance, portal.getCenter(), () -> portal.linkRemote(code.serverName(), code.portalId()));
+            WormholesAudience.sendMessage(sender, Wormholes.text().component(sender,
+                    WormholesMessages.NETWORK_LINKED,
+                    WormholesLocalization.args(
+                            MessageArgument.untrusted("portal", portal.getName()),
+                            MessageArgument.untrusted("destination", code.portalName()),
+                            MessageArgument.untrusted("server", code.serverName()))));
+        } else {
+            WormholesAudience.sendMessage(sender, Wormholes.text().component(sender,
+                    WormholesMessages.NETWORK_ROUTE_SAVED,
+                    WormholesLocalization.args(
+                            MessageArgument.untrusted("server", code.serverName()),
+                            MessageArgument.untrusted("fingerprint", Handshake.fingerprint(Handshake.decodePublicKeyText(code.publicKey()))),
+                            MessageArgument.untrusted("portal", code.portalName()))));
+        }
+        WormholesAudience.sendMessage(sender, Wormholes.text().component(sender, WormholesMessages.NETWORK_CHECK_STATUS));
+    }
+
+    private void importServerNow(CommandSender sender, ServerCode code) {
+        if (code.serverName().equals(network.getLocalName())) {
+            WormholesAudience.sendMessage(sender, Wormholes.text().component(sender,
+                    WormholesMessages.NETWORK_CODE_SAME_IDENTITY,
+                    WormholesLocalization.args(MessageArgument.untrusted("server", code.serverName()))));
+            return;
+        }
+
+        pairing.importServer(code);
+        enableAndStart();
+
+        WormholesAudience.sendMessage(sender, Wormholes.text().component(sender,
+                WormholesMessages.SERVER_SAVED,
+                WormholesLocalization.args(
+                        MessageArgument.untrusted("server", code.serverName()),
+                        MessageArgument.untrusted("fingerprint", Handshake.fingerprint(Handshake.decodePublicKeyText(code.publicKey()))))));
+        WormholesAudience.sendMessage(sender, Wormholes.text().component(sender, WormholesMessages.NETWORK_CHECK_STATUS));
+    }
+
+    /** This server's pairing code without chat output; used by the proxy bridge to enroll. */
+    public ServerCode localServerCode() {
+        return pairing.serverCode();
+    }
+
+    public boolean importProxyServerCode(ServerCode code) {
+        return pairing.importProxyServerCode(code);
+    }
+
+    private void enableAndStart() {
+        NetworkConfig config = Wormholes.settings.getNetwork();
+        if (!config.enabled) {
+            config.enabled = true;
+            persistConfig(config);
+        }
+        if (!network.isRunning()) {
+            network.start();
+        }
+    }
+
+    private String resolveAdvertiseHost(CommandSender sender, NetworkConfig config) {
+        if (config.advertiseHostOverride != null && !config.advertiseHostOverride.isBlank()) {
+            return config.advertiseHostOverride;
+        }
+        String resolved = network.getAdvertiseHost();
+        WormholesAudience.sendMessage(sender, Wormholes.text().component(sender,
+                WormholesMessages.NETWORK_USING_ADDRESS,
+                WormholesLocalization.args(MessageArgument.untrusted("address", resolved))));
+        return resolved;
+    }
+
+    private void persistConfig(NetworkConfig config) {
+        FoliaScheduler.runAsync(Wormholes.instance, () -> {
+            try {
+                Wormholes.settings.save(Wormholes.instance.getDataFolder().toPath());
+            } catch (Throwable e) {
+                Wormholes.w("net: failed to persist wormholes.toml: " + e.getMessage());
+            }
+        });
+    }
+
+}

@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "id": "wormholes",
+  "version": "${version}",
+  "name": "Portails Immersifs (Wormholes)",
+  "description": "Portails visibles et traversables pour Fabric 26.3. Commandes françaises /portail et anglaises /portal. See-through portals with French and English commands.",
+  "authors": [
+    "Volmit Software",
+    "KB — personnalisation et commandes françaises"
+  ],
+  "license": "GPL-3.0",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "art.arcane.wormholes.fabric.WormholesFabric"
+    ],
+    "client": [
+      "art.arcane.wormholes.fabric.WormholesFabricClient"
+    ]
+  },
+  "jars": [
+    {
+      "file": "META-INF/jars/fabric-api-base.jar"
+    },
+    {
+      "file": "META-INF/jars/fabric-lifecycle-events-v1.jar"
+    },
+    {
+      "file": "META-INF/jars/fabric-command-api-v2.jar"
+    },
+    {
+      "file": "META-INF/jars/fabric-events-interaction-v0.jar"
+    },
+    {
+      "file": "META-INF/jars/fabric-entity-events-v1.jar"
+    },
+    {
+      "file": "META-INF/jars/fabric-networking-api-v1.jar"
+    },
+    {
+      "file": "META-INF/jars/fabric-resource-loader-v1.jar"
+    },
+    {
+      "file": "META-INF/jars/fabric-registry-sync-v0.jar"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=${fabricLoaderVersion}",
+    "minecraft": "${minecraftVersion}",
+    "java": ">=25"
+  },
+  "mixins": [
+    "wormholes.mixins.json"
+  ]
+}

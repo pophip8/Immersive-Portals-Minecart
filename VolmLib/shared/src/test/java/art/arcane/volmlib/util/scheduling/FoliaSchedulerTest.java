@@ -1,0 +1,474 @@
+package art.arcane.volmlib.util.scheduling;
+
+import io.papermc.paper.threadedregions.scheduler.EntityScheduler;
+import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import org.bukkit.Bukkit;
+import org.bukkit.Server;
+import org.bukkit.World;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Player;
+import org.bukkit.plugin.Plugin;
+import org.bukkit.scheduler.BukkitScheduler;
+import org.bukkit.scheduler.BukkitTask;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import java.util.logging.Logger;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+
+public class FoliaSchedulerTest {
+    private SchedulerHandler schedulerHandler;
+    private Server server;
+    private Plugin plugin;
+    private boolean primaryThread;
+
+    @Before
+    public void setUp() throws Exception {
+        resetStaticState();
+        schedulerHandler = new SchedulerHandler();
+        BukkitScheduler scheduler = proxy(BukkitScheduler.class, schedulerHandler);
+        server = proxy(Server.class, (proxy, method, arguments) -> switch (method.getName()) {
+            case "getLogger" -> Logger.getLogger("FoliaSchedulerTest");
+            case "getName" -> "Spigot";
+            case "getVersion", "getBukkitVersion", "getMinecraftVersion" -> "26.2";
+            case "getScheduler" -> scheduler;
+            case "isPrimaryThread", "isTickThread", "isOwnedByCurrentRegion" -> primaryThread;
+            default -> defaultValue(method.getReturnType());
+        });
+        setStaticField(Bukkit.class, "server", server);
+        plugin = plugin(true);
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        resetStaticState();
+    }
+
+    @Test
+    public void stoppingStatusUsesTheAvailableServerCapability() {
+        Server stopping = proxy(Server.class, (instance, method, arguments) ->
+            method.getName().equals("isStopping") ? true : defaultValue(method.getReturnType()));
+        assertTrue(FoliaScheduler.isStopping(stopping));
+        assertFalse(FoliaScheduler.isStopping(server));
+        assertFalse(FoliaScheduler.isStopping(null));
+    }
+
+    @Test
+    public void nonFoliaImmediateTasksUseBukkitSchedulers() {
+        World world = proxy(World.class, FoliaSchedulerTest::defaultInvocation);
+        Entity entity = proxy(Entity.class, FoliaSchedulerTest::defaultInvocation);
+
+        assertTrue(FoliaScheduler.runGlobal(plugin, () -> {
+        }));
+        assertTrue(FoliaScheduler.runRegion(plugin, world, 2, 3, () -> {
+        }));
+        assertTrue(FoliaScheduler.runEntity(plugin, entity, () -> {
+        }));
+        assertTrue(FoliaScheduler.runAsync(plugin, () -> {
+        }));
+
+        assertEquals(List.of("runTask", "runTask", "runTask", "runTaskAsynchronously"), schedulerHandler.methodNames());
+    }
+
+    @Test
+    public void nonFoliaDelayedTasksPreserveTickDelays() {
+        World world = proxy(World.class, FoliaSchedulerTest::defaultInvocation);
+        Entity entity = proxy(Entity.class, FoliaSchedulerTest::defaultInvocation);
+
+        assertTrue(FoliaScheduler.runGlobal(plugin, () -> {
+        }, 7L));
+        assertTrue(FoliaScheduler.runRegion(plugin, world, 2, 3, () -> {
+        }, 9L));
+        assertTrue(FoliaScheduler.runEntity(plugin, entity, () -> {
+        }, 11L));
+        assertTrue(FoliaScheduler.runAsync(plugin, () -> {
+        }, 13L));
+
+        assertEquals(List.of(7L, 9L, 11L, 13L), schedulerHandler.delays());
+    }
+
+    @Test
+    public void connectedPlayerSurvivesInvalidWorldTransferAcrossFallbackTasks() {
+        AtomicBoolean online = new AtomicBoolean(true);
+        Entity player = playerWithoutWorldEntity(online);
+        List<String> invoked = new ArrayList<>();
+        assertTrue(FoliaScheduler.runEntity(plugin, player, () -> {
+            invoked.add("first");
+            assertTrue(FoliaScheduler.runEntity(plugin, player, () -> invoked.add("second"),
+                1L, () -> invoked.add("retired")));
+        }, 1L, () -> invoked.add("retired")));
+        schedulerHandler.tasks.get(0).run();
+        schedulerHandler.tasks.get(1).run();
+        assertEquals(List.of("first", "second"), invoked);
+        assertEquals(List.of(1L, 1L), schedulerHandler.delays());
+    }
+
+    @Test
+    public void connectedInvalidPlayerRunsImmediatelyOnConventionalOwner() {
+        primaryThread = true;
+        List<String> invoked = new ArrayList<>();
+        assertTrue(FoliaScheduler.runEntity(plugin, playerWithoutWorldEntity(new AtomicBoolean(true)),
+            () -> invoked.add("task"), 0L, () -> invoked.add("retired")));
+        assertEquals(List.of("task"), invoked);
+        assertTrue(schedulerHandler.tasks.isEmpty());
+    }
+
+    @Test
+    public void cancellablePlayerFallbackSurvivesWorldTransfer() {
+        List<String> invoked = new ArrayList<>();
+        assertNotNull(FoliaScheduler.scheduleEntity(plugin, playerWithoutWorldEntity(new AtomicBoolean(true)),
+            new FoliaScheduler.DelayedTask(1L, () -> invoked.add("task"), () -> invoked.add("retired"))));
+        schedulerHandler.tasks.get(0).run();
+        assertEquals(List.of("task"), invoked);
+    }
+
+    @Test
+    public void disconnectedPlayerRetiresAcceptedFallbackTasks() {
+        AtomicBoolean online = new AtomicBoolean(true);
+        Entity player = playerWithoutWorldEntity(online);
+        List<String> invoked = new ArrayList<>();
+        assertTrue(FoliaScheduler.runEntity(plugin, player, () -> invoked.add("task"),
+            1L, () -> invoked.add("retired-run")));
+        assertNotNull(FoliaScheduler.scheduleEntity(plugin, player,
+            new FoliaScheduler.DelayedTask(1L, () -> invoked.add("task"), () -> invoked.add("retired-handle"))));
+        online.set(false);
+        schedulerHandler.tasks.forEach(Runnable::run);
+        assertEquals(List.of("retired-run", "retired-handle"), invoked);
+    }
+
+    @Test
+    public void invalidNonPlayerRetiresAcceptedFallbackTasks() {
+        Entity entity = entityWithScheduler(null);
+        List<String> invoked = new ArrayList<>();
+        assertTrue(FoliaScheduler.runEntity(plugin, entity, () -> invoked.add("task"),
+            1L, () -> invoked.add("retired-run")));
+        assertNotNull(FoliaScheduler.scheduleEntity(plugin, entity,
+            new FoliaScheduler.DelayedTask(1L, () -> invoked.add("task"), () -> invoked.add("retired-handle"))));
+        schedulerHandler.tasks.forEach(Runnable::run);
+        assertEquals(List.of("retired-run", "retired-handle"), invoked);
+    }
+
+    @Test
+    public void connectedPlayerStillHonorsNativeSchedulerRetirement() {
+        Entity player = playerEntity((instance, method, arguments) -> switch (method.getName()) {
+            case "getScheduler" -> retiredEntityScheduler();
+            case "getUniqueId" -> UUID.fromString("55555555-5555-5555-5555-555555555555");
+            case "isOnline" -> true;
+            default -> defaultInvocation(instance, method, arguments);
+        });
+        List<String> invoked = new ArrayList<>();
+        assertFalse(FoliaScheduler.runEntity(plugin, player, () -> invoked.add("task"),
+            1L, () -> invoked.add("retired")));
+        assertEquals(List.of("retired"), invoked);
+        assertTrue(schedulerHandler.tasks.isEmpty());
+    }
+
+    @Test
+    public void fallbackRejectsInactivePluginsAndSchedulerFailures() {
+        assertFalse(FoliaScheduler.runGlobal(plugin(false), () -> {
+        }));
+        assertTrue(schedulerHandler.methodNames().isEmpty());
+
+        schedulerHandler.rejectScheduling = true;
+        assertFalse(FoliaScheduler.runGlobal(plugin, () -> {
+        }));
+        assertFalse(FoliaScheduler.runAsync(plugin, () -> {
+        }));
+    }
+
+    @Test
+    public void nonFoliaCancellationUsesBukkitScheduler() {
+        FoliaScheduler.cancelTasks(plugin);
+        assertEquals(List.of("cancelTasks"), schedulerHandler.methodNames());
+    }
+
+    @Test
+    public void classifyScheduleOutcomeReportsSchedulingAccurately() {
+        assertEquals(FoliaScheduler.ScheduleResult.SCHEDULED, FoliaScheduler.classifyScheduleOutcome(true, null));
+        assertEquals(FoliaScheduler.ScheduleResult.SCHEDULED, FoliaScheduler.classifyScheduleOutcome(false, Boolean.TRUE));
+        assertEquals(FoliaScheduler.ScheduleResult.REJECTED, FoliaScheduler.classifyScheduleOutcome(false, Boolean.FALSE));
+        assertEquals(FoliaScheduler.ScheduleResult.REJECTED, FoliaScheduler.classifyScheduleOutcome(false, null));
+        assertEquals(FoliaScheduler.ScheduleResult.SCHEDULED, FoliaScheduler.classifyScheduleOutcome(false, new Object()));
+    }
+
+    @Test
+    public void retiredEntitySchedulingInvokesRetiredAndReportsFailure() {
+        List<String> invoked = new ArrayList<>();
+        Entity entity = entityWithScheduler(retiredEntityScheduler());
+
+        assertFalse(FoliaScheduler.runEntity(plugin, entity, () -> invoked.add("task"), 0L, () -> invoked.add("retired")));
+        assertEquals(List.of("retired"), invoked);
+
+        invoked.clear();
+        assertFalse(FoliaScheduler.runEntity(plugin, entity, () -> invoked.add("task"), 5L, () -> invoked.add("retired")));
+        assertEquals(List.of("retired"), invoked);
+        assertTrue(schedulerHandler.methodNames().isEmpty());
+    }
+
+    @Test
+    public void retiredEntitySchedulingWithoutRetiredCallbackReturnsFalse() {
+        Entity entity = entityWithScheduler(retiredEntityScheduler());
+
+        assertFalse(FoliaScheduler.runEntity(plugin, entity, () -> {
+        }, 0L));
+        assertFalse(FoliaScheduler.runEntity(plugin, entity, () -> {
+        }, 5L));
+        assertTrue(schedulerHandler.methodNames().isEmpty());
+    }
+
+    @Test
+    public void activeEntitySchedulingReportsSuccessWithoutInvokingCallbacks() {
+        List<String> invoked = new ArrayList<>();
+        EntityScheduler entityScheduler = proxy(EntityScheduler.class, (proxy, method, arguments) -> switch (method.getName()) {
+            case "execute" -> true;
+            default -> defaultValue(method.getReturnType());
+        });
+        Entity entity = entityWithScheduler(entityScheduler);
+
+        assertTrue(FoliaScheduler.runEntity(plugin, entity, () -> invoked.add("task"), 0L, () -> invoked.add("retired")));
+        assertTrue(invoked.isEmpty());
+        assertTrue(schedulerHandler.methodNames().isEmpty());
+    }
+
+    @Test
+    public void cancellableEntityTasksRetainAndCancelTheNativeHandle() {
+        AtomicInteger cancelled = new AtomicInteger();
+        AtomicInteger retired = new AtomicInteger();
+        AtomicInteger executed = new AtomicInteger();
+        AtomicReference<Consumer<ScheduledTask>> callback = new AtomicReference<>();
+        AtomicReference<Runnable> nativeRetired = new AtomicReference<>();
+        ScheduledTask nativeTask = new ScheduledTask() {
+            @Override
+            public Plugin getOwningPlugin() {
+                return plugin;
+            }
+
+            @Override
+            public boolean isRepeatingTask() {
+                return false;
+            }
+
+            @Override
+            public CancelledState cancel() {
+                cancelled.incrementAndGet();
+                return CancelledState.CANCELLED_BY_CALLER;
+            }
+
+            @Override
+            public ExecutionState getExecutionState() {
+                return ExecutionState.IDLE;
+            }
+        };
+        EntityScheduler scheduler = proxy(EntityScheduler.class, (proxy, method, arguments) -> {
+            if (method.getName().equals("runDelayed")) {
+                @SuppressWarnings("unchecked")
+                Consumer<ScheduledTask> scheduled = (Consumer<ScheduledTask>) arguments[1];
+                callback.set(scheduled);
+                nativeRetired.set((Runnable) arguments[2]);
+                return nativeTask;
+            }
+            return defaultValue(method.getReturnType());
+        });
+        SchedulerUtils.TaskHandle handle = FoliaScheduler.scheduleEntity(plugin, entityWithScheduler(scheduler),
+            new FoliaScheduler.DelayedTask(20, executed::incrementAndGet, retired::incrementAndGet));
+        assertNotNull(handle);
+        handle.cancel();
+        handle.cancel();
+        nativeRetired.get().run();
+        callback.get().accept(nativeTask);
+        assertEquals(1, cancelled.get());
+        assertEquals(1, retired.get());
+        assertEquals(0, executed.get());
+    }
+
+    @Test
+    public void rejectedNativeCancellableTaskRetiresExactlyOnce() {
+        AtomicInteger retired = new AtomicInteger();
+        EntityScheduler scheduler = proxy(EntityScheduler.class, (proxy, method, arguments) -> {
+            if (method.getName().equals("runDelayed")) {
+                ((Runnable) arguments[2]).run();
+            }
+            return null;
+        });
+        assertNull(FoliaScheduler.scheduleEntity(plugin, entityWithScheduler(scheduler),
+            new FoliaScheduler.DelayedTask(5, () -> { }, retired::incrementAndGet)));
+        assertEquals(1, retired.get());
+        assertTrue(schedulerHandler.methodNames().isEmpty());
+    }
+
+    @Test
+    public void cancellableGlobalTasksUseTheBukkitNativeTaskAndPreserveDelay() {
+        AtomicInteger retired = new AtomicInteger();
+        SchedulerUtils.TaskHandle handle = FoliaScheduler.scheduleGlobal(plugin,
+            new FoliaScheduler.DelayedTask(17, () -> { }, retired::incrementAndGet));
+        assertNotNull(handle);
+        assertEquals(List.of(17L), schedulerHandler.delays());
+        handle.cancel();
+        assertEquals(1, retired.get());
+        assertTrue(handle.isCancelled());
+    }
+
+    @Test
+    public void nativeCancellationResultsDistinguishDrainedAndRunningTasks() {
+        for (ScheduledTask.CancelledState result : List.of(ScheduledTask.CancelledState.CANCELLED_ALREADY,
+            ScheduledTask.CancelledState.ALREADY_EXECUTED, ScheduledTask.CancelledState.RUNNING)) {
+            AtomicInteger retired = new AtomicInteger();
+            AtomicReference<Consumer<ScheduledTask>> callback = new AtomicReference<>();
+            ScheduledTask nativeTask = proxy(ScheduledTask.class, (proxy, method, arguments) ->
+                method.getName().equals("cancel") ? result : defaultValue(method.getReturnType()));
+            EntityScheduler scheduler = proxy(EntityScheduler.class, (proxy, method, arguments) -> {
+                if (method.getName().equals("runDelayed")) {
+                    @SuppressWarnings("unchecked")
+                    Consumer<ScheduledTask> scheduled = (Consumer<ScheduledTask>) arguments[1];
+                    callback.set(scheduled);
+                    return nativeTask;
+                }
+                return defaultValue(method.getReturnType());
+            });
+            SchedulerUtils.TaskHandle handle = FoliaScheduler.scheduleEntity(plugin, entityWithScheduler(scheduler),
+                new FoliaScheduler.DelayedTask(5, () -> { }, retired::incrementAndGet));
+            assertNotNull(handle);
+            handle.cancel();
+            assertEquals(result == ScheduledTask.CancelledState.RUNNING ? 0 : 1, retired.get());
+            callback.get().accept(nativeTask);
+            assertEquals(1, retired.get());
+        }
+    }
+
+    private static EntityScheduler retiredEntityScheduler() {
+        return proxy(EntityScheduler.class, (proxy, method, arguments) -> switch (method.getName()) {
+            case "execute" -> false;
+            case "run", "runDelayed", "runAtFixedRate" -> null;
+            default -> defaultValue(method.getReturnType());
+        });
+    }
+
+    private static Entity entityWithScheduler(EntityScheduler entityScheduler) {
+        return proxy(Entity.class, (proxy, method, arguments) -> switch (method.getName()) {
+            case "getScheduler" -> entityScheduler;
+            case "isValid" -> false;
+            case "equals" -> proxy == arguments[0];
+            case "hashCode" -> System.identityHashCode(proxy);
+            default -> defaultValue(method.getReturnType());
+        });
+    }
+
+    private static Entity playerWithoutWorldEntity(AtomicBoolean online) {
+        return playerEntity((instance, method, arguments) -> switch (method.getName()) {
+            case "getUniqueId" -> UUID.fromString("55555555-5555-5555-5555-555555555555");
+            case "isOnline" -> online.get();
+            case "isValid" -> false;
+            default -> defaultInvocation(instance, method, arguments);
+        });
+    }
+
+    private static Entity playerEntity(InvocationHandler handler) {
+        return Entity.class.cast(Proxy.newProxyInstance(Entity.class.getClassLoader(),
+            new Class<?>[]{Entity.class, Player.class}, handler));
+    }
+
+    private Plugin plugin(boolean enabled) {
+        return proxy(Plugin.class, (proxy, method, arguments) -> switch (method.getName()) {
+            case "isEnabled" -> enabled;
+            case "getServer" -> server;
+            case "getName" -> "TestPlugin";
+            case "equals" -> proxy == arguments[0];
+            case "hashCode" -> System.identityHashCode(proxy);
+            default -> defaultValue(method.getReturnType());
+        });
+    }
+
+    private static Object defaultInvocation(Object proxy, Method method, Object[] arguments) {
+        return switch (method.getName()) {
+            case "equals" -> proxy == arguments[0];
+            case "hashCode" -> System.identityHashCode(proxy);
+            default -> defaultValue(method.getReturnType());
+        };
+    }
+
+    private static void resetStaticState() throws Exception {
+        setStaticField(Bukkit.class, "server", null);
+        setStaticField(FoliaScheduler.class, "forcedFoliaThreading", false);
+        setStaticField(FoliaScheduler.class, "globalRegionSchedulerHandle", null);
+        setStaticField(FoliaScheduler.class, "regionSchedulerHandle", null);
+        setStaticField(FoliaScheduler.class, "asyncSchedulerHandle", null);
+    }
+
+    private static void setStaticField(Class<?> owner, String name, Object value) throws Exception {
+        Field field = owner.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(null, value);
+    }
+
+    private static Object defaultValue(Class<?> type) {
+        if (!type.isPrimitive()) {
+            return null;
+        }
+        if (type == boolean.class) {
+            return false;
+        }
+        if (type == char.class) {
+            return '\0';
+        }
+        return 0;
+    }
+
+    private static <T> T proxy(Class<T> type, InvocationHandler handler) {
+        return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, handler));
+    }
+
+    private static final class SchedulerHandler implements InvocationHandler {
+        private final List<ScheduledCall> calls = new ArrayList<>();
+        private final List<Runnable> tasks = new ArrayList<>();
+        private boolean rejectScheduling;
+
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] arguments) {
+            String name = method.getName();
+            if (name.startsWith("runTask")) {
+                if (rejectScheduling) {
+                    throw new UnsupportedOperationException("rejected");
+                }
+                long delay = arguments != null && arguments.length > 0 && arguments[arguments.length - 1] instanceof Long value
+                        ? value
+                        : 0L;
+                calls.add(new ScheduledCall(name, delay));
+                tasks.add((Runnable) arguments[1]);
+                return proxy(BukkitTask.class, FoliaSchedulerTest::defaultInvocation);
+            }
+            if (name.equals("cancelTasks")) {
+                calls.add(new ScheduledCall(name, 0L));
+                return null;
+            }
+            return defaultValue(method.getReturnType());
+        }
+
+        private List<String> methodNames() {
+            return calls.stream().map(ScheduledCall::methodName).toList();
+        }
+
+        private List<Long> delays() {
+            return calls.stream().map(ScheduledCall::delay).toList();
+        }
+    }
+
+    private record ScheduledCall(String methodName, long delay) {
+    }
+}

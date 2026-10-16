@@ -1,0 +1,83 @@
+package art.arcane.wormholes.portal;
+
+import art.arcane.wormholes.util.BukkitGeometry;
+
+import art.arcane.wormholes.access.AccessTestPortals;
+import art.arcane.optics.math.Face;
+import org.bukkit.Location;
+import org.bukkit.World;
+import org.bukkit.util.Vector;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import art.arcane.optics.frame.Frame;
+
+class LocalPortalExitPlacementTest {
+    @Test
+    void fallingJumpPreservesHeightInsteadOfPlacingFeetInsideTheFloor() {
+        LocalPortal portal = portal(Face.S);
+        Vector point = BukkitGeometry.bukkit(portal.getOrigin());
+        point.setY(101.42D);
+        Traversive traversive = crossing(portal, point, new Vector(0.0D, -0.8D, -0.2D), true);
+
+        Location target = portal.computeExitTarget(traversive);
+
+        assertEquals(101.42D, target.getY(), 1.0E-9D);
+        assertEquals(point.getX(), target.getX(), 1.0E-9D);
+        assertEquals(point.getZ(), target.getZ(), 1.0E-9D);
+        assertEquals(new Vector(0.0D, -0.8D, -0.2D), traversive.getOutVelocity(portal.getFrame()));
+    }
+
+    @Test
+    void jumpingAndStrafingPreserveTheTransformedEndpointOnEveryFrame() {
+        for (Face direction : List.of(Face.N, Face.S, Face.E, Face.W, Face.U, Face.D)) {
+            LocalPortal portal = portal(direction);
+            Frame frame = portal.getFrame();
+            for (boolean frontSide : List.of(Boolean.TRUE, Boolean.FALSE)) {
+                double sign = frontSide ? -1.0D : 1.0D;
+                for (double verticalSpeed : List.of(-3.0D, 3.0D)) {
+                    Vector point = BukkitGeometry.bukkit(portal.getOrigin());
+                    Vector velocity = BukkitGeometry.bukkit(frame.getNormal()).multiply(sign * 0.2D)
+                        .add(BukkitGeometry.bukkit(frame.getRight()).multiply(4.0D))
+                        .add(BukkitGeometry.bukkit(frame.getUp()).multiply(verticalSpeed));
+                    Traversive traversive = crossing(portal, point, velocity, frontSide);
+
+                    Location target = portal.computeExitTarget(traversive);
+                    Vector expected = point;
+
+                    assertEquals(expected.getX(), target.getX(), 1.0E-9D);
+                    assertEquals(expected.getY(), target.getY(), 1.0E-9D);
+                    assertEquals(expected.getZ(), target.getZ(), 1.0E-9D);
+                    assertEquals(velocity, traversive.getOutVelocity(frame));
+                }
+            }
+        }
+    }
+
+    @Test
+    void zeroNormalVelocityDoesNotDisplaceTheArrival() {
+        LocalPortal portal = portal(Face.S);
+        Vector point = BukkitGeometry.bukkit(portal.getOrigin());
+        for (boolean frontSide : List.of(Boolean.TRUE, Boolean.FALSE)) {
+            Traversive traversive = crossing(portal, point, new Vector(0.0D, -0.8D, 0.0D), frontSide);
+            Location target = portal.computeExitTarget(traversive);
+
+            assertEquals(point.getY(), target.getY(), 1.0E-9D);
+            assertEquals(point.getZ(), target.getZ(), 1.0E-9D);
+        }
+    }
+
+    private static LocalPortal portal(Face normal) {
+        World world = AccessTestPortals.world("exit-placement");
+        LocalPortal portal = AccessTestPortals.portal(world);
+        portal.setFrame(Frame.canonical(normal));
+        return portal;
+    }
+
+    private static Traversive crossing(LocalPortal portal, Vector point, Vector velocity, boolean frontSide) {
+        return new Traversive(null, TraversableType.PLAYER, portal.getFrame().view(frontSide),
+            BukkitGeometry.bukkit(portal.getOrigin()), point, velocity, velocity.clone().normalize(), frontSide);
+    }
+}

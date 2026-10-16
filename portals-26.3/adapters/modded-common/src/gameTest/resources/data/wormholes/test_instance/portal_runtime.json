@@ -1,0 +1,9 @@
+{
+  "type": "minecraft:function",
+  "function": "wormholes:portal_runtime",
+  "environment": "wormholes:portal_runtime",
+  "structure": "wormholes:empty",
+  "max_ticks": 3600,
+  "setup_ticks": 5,
+  "sky_access": true
+}

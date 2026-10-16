@@ -1,0 +1,107 @@
+package art.arcane.wormholes.modded;
+
+import art.arcane.optics.aperture.EndpointDirectory;
+import art.arcane.optics.frame.AxisPermutation;
+import art.arcane.optics.frame.Frame;
+import art.arcane.optics.frame.QuarterTurn;
+import static art.arcane.optics.math.Face.E;
+import art.arcane.optics.recursion.RecursiveEndpoints;
+import art.arcane.optics.scan.Sample;
+import art.arcane.optics.scan.SampleMemo;
+import art.arcane.optics.scan.Sampler;
+import net.minecraft.core.Direction;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import org.junit.Test;
+
+import java.util.List;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotSame;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+public class MinecraftProjectorSamplerTest extends MinecraftTestBase {
+    @Test
+    public void nativeSamplingPreservesAirMissingBackingAndBuriedClassification() {
+        Fixture fixture = fixture();
+        BlockState stone = Blocks.STONE.defaultBlockState();
+        when(fixture.view().sampleBlockData(anyInt(), anyInt(), anyInt())).thenReturn(stone);
+        when(fixture.view().material(anyInt(), anyInt(), anyInt())).thenReturn(stone);
+        fixture.sampler().setBuriedCellCullingPass(true);
+        assertEquals(Sample.Kind.OCCLUDED, sample(fixture, true).kind());
+
+        fixture.memo().clearDestinationSamples();
+        when(fixture.view().material(2, 64, 0)).thenReturn(Blocks.AIR.defaultBlockState());
+        assertEquals(Sample.Kind.BACKING_BLOCK, sample(fixture, true).kind());
+
+        fixture.memo().clearDestinationSamples();
+        when(fixture.view().material(1, 64, 0)).thenReturn(Blocks.AIR.defaultBlockState());
+        assertEquals(Sample.Kind.BLOCK, sample(fixture, true).kind());
+
+        fixture.memo().clearDestinationSamples();
+        when(fixture.view().sampleBlockData(0, 64, 0)).thenReturn(Blocks.CAVE_AIR.defaultBlockState());
+        Sample<BlockState, MinecraftProjectionWorldView> air = sample(fixture, true);
+        assertEquals(Sample.Kind.REMOTE_AIR, air.kind());
+        assertSame(Blocks.AIR.defaultBlockState(), air.data());
+        assertSame(fixture.view(), air.lightView());
+
+        fixture.memo().clearDestinationSamples();
+        when(fixture.view().sampleBlockData(0, 64, 0)).thenReturn(null);
+        assertEquals(Sample.Kind.NO_SAMPLE, sample(fixture, true).kind());
+    }
+
+    @Test
+    public void nativeMirrorTransformUsesSharedOrientationAndMemoizedBlockState() {
+        Fixture fixture = fixture();
+        Frame frame = Frame.canonical(E);
+        BlockState eastFacing = Blocks.FURNACE.defaultBlockState()
+            .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.EAST);
+        fixture.sampler().prepareTransform(AxisPermutation.mirror(frame, QuarterTurn.DEGREES_0));
+        BlockState mirrored = fixture.sampler().transformProjectedBlockData(eastFacing);
+        assertEquals(Direction.WEST, mirrored.getValue(BlockStateProperties.HORIZONTAL_FACING));
+        assertSame(mirrored, fixture.sampler().transformProjectedBlockData(eastFacing));
+    }
+
+    @Test
+    public void detachedOccludedSentinelCannotBeConfusedWithRealStone() {
+        Fixture fixture = fixture();
+        BlockState sentinel = MinecraftProjectorBlocks.INSTANCE.occluded();
+        assertNotSame(Blocks.STONE.defaultBlockState(), sentinel);
+        assertFalse(MinecraftProjectorBlocks.INSTANCE.isOccluded(Blocks.STONE.defaultBlockState()));
+        when(fixture.view().sampleBlockData(0, 64, 0)).thenReturn(sentinel);
+        assertEquals(Sample.Kind.OCCLUDED, sample(fixture, false).kind());
+    }
+
+    private static Sample<BlockState, MinecraftProjectionWorldView> sample(Fixture fixture, boolean culling) {
+        return fixture.sampler().resolve(fixture.view(), 0.1D, 64.1D, 0.1D,
+            0.0D, 64.0D, -5.0D, null, 3, culling, null, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Fixture fixture() {
+        MinecraftProjectionWorldView view = mock(MinecraftProjectionWorldView.class);
+        ServerLevel level = mock(ServerLevel.class);
+        when(view.getWorld()).thenReturn(level);
+        when(view.buriedDepth(anyInt(), anyInt(), anyInt())).thenReturn(-1);
+        EndpointDirectory<ServerLevel, MinecraftPortal> access = mock(EndpointDirectory.class);
+        when(access.endpoints()).thenReturn(List.of());
+        RecursiveEndpoints<ServerLevel, MinecraftPortal> portals = new RecursiveEndpoints<>(access,
+            () -> new RecursiveEndpoints.Options(0.0D, 64.0D));
+        SampleMemo<BlockState, BlockState, MinecraftProjectionWorldView> memo = new SampleMemo<>(
+            MinecraftProjectorBlocks.INSTANCE, () -> null);
+        Sampler<BlockState, BlockState, ServerLevel, MinecraftPortal, MinecraftProjectionWorldView> sampler = new Sampler<>(
+            new Sampler.Options<>(memo, portals, world -> view, MinecraftProjectionWorldView::getWorld));
+        return new Fixture(view, memo, sampler);
+    }
+
+    private record Fixture(MinecraftProjectionWorldView view,
+                           SampleMemo<BlockState, BlockState, MinecraftProjectionWorldView> memo,
+                           Sampler<BlockState, BlockState, ServerLevel, MinecraftPortal, MinecraftProjectionWorldView> sampler) {
+    }
+}

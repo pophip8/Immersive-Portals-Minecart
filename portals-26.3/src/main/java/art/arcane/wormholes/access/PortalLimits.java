@@ -1,0 +1,79 @@
+package art.arcane.wormholes.access;
+
+import art.arcane.wormholes.PortalManager;
+import art.arcane.wormholes.Wormholes;
+import art.arcane.wormholes.portal.ILocalPortal;
+import art.arcane.wormholes.portal.LocalPortal;
+import org.bukkit.entity.Player;
+import org.bukkit.permissions.PermissionAttachmentInfo;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * How many frame portals one player may own. {@code wormholes.limit.<n>} raises the cap and the
+ * highest node a player holds wins; without one the configured default applies. A limit of 0 means
+ * unlimited, and {@code wormholes.admin} is never capped.
+ */
+public final class PortalLimits {
+    private static final String ADMIN_NODE = "wormholes.admin";
+
+    private PortalLimits() {
+    }
+
+    /** The cap for this player, or 0 for unlimited. */
+    public static int maximum(Player player, int configuredDefault) {
+        return PortalOwnershipLimits.maximum(player == null || player.isOp() || player.hasPermission(ADMIN_NODE),
+            configuredDefault, player == null ? List.of() : grantedNodes(player));
+    }
+
+    /** How many more portals the player may build, or -1 when they are unlimited. */
+    public static int remaining(Player player, int configuredDefault) {
+        return remaining(maximum(player, configuredDefault), player == null ? null : player.getUniqueId(), loadedPortals());
+    }
+
+    static int remaining(int maximum, UUID ownerId, Iterable<? extends ILocalPortal> portals) {
+        if (maximum <= 0) {
+            return -1;
+        }
+        return Math.max(0, maximum - owned(ownerId, portals));
+    }
+
+    public static int owned(UUID ownerId) {
+        return owned(ownerId, loadedPortals());
+    }
+
+    /** A portal owned by its own id belongs to the server, not to a player. */
+    static int owned(UUID ownerId, Iterable<? extends ILocalPortal> portals) {
+        if (ownerId == null) {
+            return 0;
+        }
+        int owned = 0;
+        for (ILocalPortal portal : portals) {
+            if (!(portal instanceof LocalPortal local)) {
+                continue;
+            }
+            UUID owner = local.getOwner();
+            if (ownerId.equals(owner) && !ownerId.equals(local.getId())) {
+                owned++;
+            }
+        }
+        return owned;
+    }
+
+    private static List<String> grantedNodes(Player player) {
+        List<String> nodes = new ArrayList<>();
+        for (PermissionAttachmentInfo granted : player.getEffectivePermissions()) {
+            if (granted.getValue()) {
+                nodes.add(granted.getPermission());
+            }
+        }
+        return nodes;
+    }
+
+    private static List<ILocalPortal> loadedPortals() {
+        PortalManager manager = Wormholes.portalManager;
+        return manager == null ? List.of() : manager.getLocalPortals();
+    }
+}

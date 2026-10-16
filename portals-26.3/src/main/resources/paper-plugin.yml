@@ -1,0 +1,134 @@
+name: ${name}
+version: ${version}
+main: ${main}
+bootstrapper: ${bootstrapper}
+folia-supported: true
+api-version: ${apiVersion}
+load: STARTUP
+description: Through-portal projection. See what is on the other side without crossing.
+authors: [ VolmitSoftware ]
+website: VolmitSoftware.com
+dependencies:
+  server:
+    FastAsyncWorldEdit:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    PlaceholderAPI:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    Iris:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    Vault:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    Citizens:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    WorldGuard:
+      load: BEFORE
+      required: false
+      join-classpath: true
+permissions:
+  wormholes.update:
+    description: Receive shared Volmit update notifications and check this plugin for updates
+    default: op
+  wormholes.debugdump:
+    description: Allows creating and optionally uploading diagnostic reports.
+    default: op
+  wormholes.language.self:
+    description: Allows choosing your own language for this plugin.
+    default: true
+  wormholes.*:
+    description: Gives access to all Wormholes permissions.
+    default: op
+    children:
+      wormholes.debugdump: true
+      wormholes.language.self: true
+      wormholes.atlas: true
+      wormholes.admin: true
+      wormholes.portals: true
+      wormholes.gateway: true
+      wormholes.doors.craft: true
+      wormholes.doors.place: true
+  wormholes.admin:
+    description: Gives access to all Wormholes admin permissions.
+    default: op
+    children:
+      wormholes.admin.items: true
+      wormholes.admin.network: true
+      wormholes.admin.projection: true
+      wormholes.admin.reset: true
+      wormholes.admin.pocket: true
+      wormholes.admin.rules: true
+      wormholes.admin.access: true
+      wormholes.admin.nexus: true
+      wormholes.admin.portals: true
+      wormholes.admin.backup: true
+      wormholes.doors.bypass: true
+      wormholes.rules.bypass: true
+  wormholes.admin.items:
+    description: Allows spawning Wormholes items (Portal Wand, Wormhole Rune, and Dimensional Door items).
+    default: op
+  wormholes.admin.network:
+    description: Allows managing Wormholes network links.
+    default: op
+  wormholes.admin.projection:
+    description: Allows freezing and flushing portal projection state.
+    default: op
+  wormholes.admin.reset:
+    description: Allows deleting portals and resetting Wormholes data.
+    default: op
+  wormholes.admin.pocket:
+    description: Allows inspecting and reshaping pocket dimensions.
+    default: op
+  wormholes.doors.bypass:
+    description: Bypass dimensional door access restrictions.
+    default: op
+  wormholes.atlas:
+    description: Allows opening the player-facing portal atlas.
+    default: true
+  wormholes.rules.bypass:
+    description: Bypass traversal rule conditions, costs, and cooldowns.
+    default: op
+  wormholes.admin.rules:
+    description: Allows managing traversal rule templates.
+    default: op
+  wormholes.admin.access:
+    description: Allows managing portal access lists, ownership, and limits.
+    default: op
+  wormholes.admin.nexus:
+    description: Allows managing portal networks and addresses.
+    default: op
+  wormholes.admin.portals:
+    description: Allows listing, inspecting, teleporting to, and bulk-editing portals.
+    default: op
+  wormholes.admin.backup:
+    description: Allows creating, restoring, exporting, and importing portal backups.
+    default: op
+  wormholes.doors.craft:
+    description: Allows crafting and reskinning dimensional doors.
+    default: op
+  wormholes.doors.place:
+    description: Allows placing dimensional doors and trapdoors.
+    default: op
+  wormholes.gateway:
+    description: Allows creating and modifying gateway portals.
+    default: op
+  wormholes.portals:
+    description: Allows creating and modifying non-gateway frame portal types.
+    default: op
+    children:
+      wormholes.portals.wormhole: true
+      wormholes.portals.portal: true
+  wormholes.portals.wormhole:
+    description: Allows creating and modifying wormhole-type frame portals.
+    default: op
+  wormholes.portals.portal:
+    description: Allows creating and modifying portal-type and RTP frame portals.
+    default: op

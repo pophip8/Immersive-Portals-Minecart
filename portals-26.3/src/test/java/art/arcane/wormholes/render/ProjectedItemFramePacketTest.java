@@ -1,0 +1,247 @@
+package art.arcane.wormholes.render;
+
+import art.arcane.optics.entity.EntityProfile;
+import com.github.retrooper.packetevents.util.Vector3d;
+
+import art.arcane.wormholes.Settings;
+import art.arcane.wormholes.util.BukkitGeometry;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Proxy;
+import java.util.List;
+import java.util.UUID;
+
+import org.bukkit.Location;
+import org.bukkit.World;
+import org.bukkit.entity.Player;
+import org.bukkit.util.Vector;
+import org.junit.jupiter.api.Test;
+
+import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
+import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
+import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
+import com.github.retrooper.packetevents.protocol.entity.type.EntityType;
+import com.github.retrooper.packetevents.protocol.component.ComponentTypes;
+import com.github.retrooper.packetevents.protocol.item.ItemStack;
+import com.github.retrooper.packetevents.protocol.item.type.ItemTypes;
+import com.github.retrooper.packetevents.protocol.player.Equipment;
+import com.github.retrooper.packetevents.protocol.world.BlockFace;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnEntity;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerMapData;
+
+import art.arcane.volmlib.util.collection.KList;
+import art.arcane.optics.entity.EntitySnapshot;
+import art.arcane.optics.entity.MapSnapshot;
+import art.arcane.wormholes.portal.ILocalPortal;
+import art.arcane.optics.frame.Frame;
+import art.arcane.optics.frame.OpticTransform;
+import art.arcane.wormholes.portal.PortalStructure;
+import art.arcane.wormholes.render.view.ProjectionEntityView;
+import art.arcane.optics.math.Box;
+import art.arcane.optics.math.Face;
+import art.arcane.optics.math.Vec3d;
+import art.arcane.optics.entity.SnapshotProjector;
+import art.arcane.optics.entity.SpoofRegistry;
+import art.arcane.optics.volume.ViewVolume;
+
+public final class ProjectedItemFramePacketTest {
+    @Test
+    public void snapshotItemFramesSpawnAndStayOnTheTransformedAttachmentFace() {
+        ProjectedEntityPacketRecorder recorder = ProjectedEntityPacketRecorder.install();
+        try {
+            EntityRenderPacketChannel channel = new EntityRenderPacketChannel();
+            BukkitEntityRegistryHost output = new BukkitEntityRegistryHost(channel, BukkitEntityRegistryHost.PLUGIN_VISIBILITY);
+            SpoofRegistry<Player, Vector3d> registry = new SpoofRegistry<>(output);
+            SnapshotProjector<Player, World, ILocalPortal, Vector3d, EntityType, ProjectionEntityView> projector = new SnapshotProjector<>(registry, BukkitEntityVisualHost.FEED, output, FidelitySettings::snapshot);
+            Frame localFrame = Frame.canonical(Face.N);
+            Frame remoteFrame = Frame.canonical(Face.U);
+            ILocalPortal localPortal = localPortal(new Vector(1.5D, 1.5D, 5.0D), localFrame);
+            ViewVolume frustum = new ViewVolume(BukkitGeometry.vector(new Location(null, 1.5D, 1.5D, 0.0D)), new TestStructure(), new ViewVolume.Options(16.0D, 16.0D, Settings.NEAR_PLANE_PADDING, Settings.FRUSTUM_CULLING_RATIO, Settings.PROJECTION_APERTURE_PADDING_BLOCKS));
+            Player observer = ProjectedEntityPacketRecorder.player(true);
+
+            assertTrue(project(projector, observer, localPortal, localFrame, remoteFrame,
+                frustum, "minecraft:item_frame", false));
+            assertTrue(project(projector, observer, localPortal, localFrame, remoteFrame,
+                frustum, "minecraft:glow_item_frame", true));
+
+            List<WrapperPlayServerSpawnEntity> spawns = recorder.sentOfType(WrapperPlayServerSpawnEntity.class);
+            assertEquals(2, spawns.size());
+            assertEquals(EntityTypes.ITEM_FRAME, spawns.get(0).getEntityType());
+            assertEquals(EntityTypes.GLOW_ITEM_FRAME, spawns.get(1).getEntityType());
+            for (WrapperPlayServerSpawnEntity spawn : spawns) {
+                assertEquals(Face.N.byteValue(), spawn.getData());
+                assertEquals(1.0D, spawn.getPosition().getX(), 0.0D);
+                assertEquals(1.0D, spawn.getPosition().getY(), 0.0D);
+                assertEquals(7.0D, spawn.getPosition().getZ(), 0.0D);
+            }
+
+            List<WrapperPlayServerEntityMetadata> metadataPackets =
+                recorder.sentOfType(WrapperPlayServerEntityMetadata.class);
+            assertEquals(2, metadataPackets.size());
+            assertEquals(BlockFace.NORTH, valueAt(metadataPackets.get(0).getEntityMetadata(), 8));
+            assertEquals(Integer.valueOf(5), valueAt(metadataPackets.get(0).getEntityMetadata(), 10));
+            assertEquals(BlockFace.NORTH, valueAt(metadataPackets.get(1).getEntityMetadata(), 8));
+            assertEquals(Integer.valueOf(3), valueAt(metadataPackets.get(1).getEntityMetadata(), 10));
+            List<WrapperPlayServerMapData> mapPackets = recorder.sentOfType(WrapperPlayServerMapData.class);
+            assertEquals(1, mapPackets.size());
+            int virtualMapId = mapPackets.get(0).getMapId();
+            assertTrue(virtualMapId < 0);
+            ItemStack projectedMap = (ItemStack) valueAt(metadataPackets.get(1).getEntityMetadata(), 9);
+            assertEquals(Integer.valueOf(virtualMapId),
+                projectedMap.getComponent(ComponentTypes.MAP_ID).orElseThrow());
+            assertTrue(recorder.sent().indexOf(spawns.get(1)) < recorder.sent().indexOf(mapPackets.get(0)));
+            assertTrue(recorder.sent().indexOf(mapPackets.get(0)) < recorder.sent().indexOf(metadataPackets.get(1)));
+        } finally {
+            recorder.uninstall();
+        }
+    }
+
+    private static boolean project(SnapshotProjector<Player, World, ILocalPortal, Vector3d, EntityType, ProjectionEntityView> projector,
+                                   Player observer,
+                                   ILocalPortal localPortal,
+                                   Frame localFrame,
+                                   Frame remoteFrame,
+                                   ViewVolume frustum,
+                                   String typeKey,
+                                   boolean filledMap) {
+        UUID entityId = UUID.randomUUID();
+        byte[] mapData = filledMap
+            ? new MapSnapshot(1, (byte) 0, true, false, mapPixels()).encode()
+            : EntitySnapshot.EMPTY;
+        EntitySnapshot visual = EntitySnapshot.full(
+            entityId,
+            typeKey,
+            0.0D, -3.0D, 0.0D,
+            0.75D,
+            0.0D, 1.0D, 0.0D,
+            0.0F, -90.0F,
+            0.0D, 0.0D, 0.0D,
+            false,
+            "", "", "",
+            null, null,
+            EntitySnapshot.EMPTY, EntitySnapshot.EMPTY, mapData,
+            0);
+        ProjectionEntityView view = entityView(entityId, filledMap);
+        OpticTransform transform = OpticTransform.between(remoteFrame, new Vec3d(0.0D, 0.0D, 0.0D), localFrame, localPortal.getOrigin());
+        return projector.projectSnapshotVisual(observer, transform, frustum, view, visual, false, null);
+    }
+
+    private static ProjectionEntityView entityView(UUID entityId, boolean filledMap) {
+        List<EntityData<?>> metadata;
+        if (filledMap) {
+            ItemStack map = ItemStack.builder()
+                .type(ItemTypes.FILLED_MAP)
+                .component(ComponentTypes.MAP_ID, Integer.valueOf(1))
+                .build();
+            metadata = List.of(
+                new EntityData<BlockFace>(8, EntityDataTypes.BLOCK_FACE, BlockFace.UP),
+                new EntityData<ItemStack>(9, EntityDataTypes.ITEMSTACK, map),
+                new EntityData<Integer>(10, EntityDataTypes.INT, Integer.valueOf(1)));
+        } else {
+            metadata = List.of(
+                new EntityData<BlockFace>(8, EntityDataTypes.BLOCK_FACE, BlockFace.UP),
+                new EntityData<Integer>(10, EntityDataTypes.INT, Integer.valueOf(1)));
+        }
+        return new ProjectionEntityView() {
+            @Override
+            public boolean isVisibleTo(Player observer, UUID entityId) {
+                return true;
+            }
+
+            @Override
+            public List<EntitySnapshot> getEntities(double centerX, double centerY, double centerZ, double range) {
+                return List.of();
+            }
+
+            @Override
+            public EntityProfile getProfile(UUID requestedId) {
+                return null;
+            }
+
+            @Override
+            public List<EntityData<?>> getMetadata(UUID requestedId) {
+                return entityId.equals(requestedId) ? metadata : List.of();
+            }
+
+            @Override
+            public List<Equipment> getEquipment(UUID requestedId) {
+                return List.of();
+            }
+
+            @Override
+            public int getStateVersion(UUID requestedId) {
+                return 0;
+            }
+        };
+    }
+
+    private static ILocalPortal localPortal(Vector origin, Frame frame) {
+        UUID id = UUID.randomUUID();
+        InvocationHandler handler = (proxy, method, args) -> {
+            String name = method.getName();
+            if ("getOrigin".equals(name) || "origin".equals(name)) {
+                return BukkitGeometry.vector(origin);
+            }
+            if ("getFrame".equals(name) || "frame".equals(name)) {
+                return frame;
+            }
+            if ("getId".equals(name) || "id".equals(name)) {
+                return id;
+            }
+            if ("getName".equals(name)) {
+                return "local";
+            }
+            if ("hashCode".equals(name)) {
+                return Integer.valueOf(id.hashCode());
+            }
+            if ("equals".equals(name)) {
+                return Boolean.valueOf(proxy == args[0]);
+            }
+            if ("toString".equals(name)) {
+                return "local";
+            }
+            return null;
+        };
+        return (ILocalPortal) Proxy.newProxyInstance(
+            ILocalPortal.class.getClassLoader(), new Class<?>[] {ILocalPortal.class}, handler);
+    }
+
+    private static Object valueAt(List<EntityData<?>> metadata, int index) {
+        for (EntityData<?> data : metadata) {
+            if (data.getIndex() == index) {
+                return data.getValue();
+            }
+        }
+        return null;
+    }
+
+    private static byte[] mapPixels() {
+        byte[] pixels = new byte[MapSnapshot.PIXEL_COUNT];
+        for (int index = 0; index < pixels.length; index++) {
+            pixels[index] = (byte) index;
+        }
+        return pixels;
+    }
+
+    private static final class TestStructure extends PortalStructure {
+        @Override
+        public Box getArea() {
+            return new Box(0.0D, 3.0D, 0.0D, 3.0D, 5.0D, 5.0D);
+        }
+
+        @Override
+        public Location getCenter() {
+            return new Location(null, 1.5D, 1.5D, 5.0D);
+        }
+
+        @Override
+        public List<Box> getCachedApertureFaces(Face face) {
+            KList<Box> faces = new KList<Box>();
+            faces.add(new Box(0.0D, 3.0D, 0.0D, 3.0D, 5.0D, 5.0D));
+            return faces;
+        }
+    }
+}

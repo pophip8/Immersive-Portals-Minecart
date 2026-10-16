@@ -1,0 +1,10 @@
+{
+  "pack": {
+    "description": "Wormholes fullbright pocket dimension",
+    "max_format": 121,
+    "min_format": [
+      101,
+      1
+    ]
+  }
+}

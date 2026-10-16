@@ -1,0 +1,154 @@
+package art.arcane.wormholes.network;
+
+import art.arcane.wormholes.Wormholes;
+import art.arcane.wormholes.Settings;
+import art.arcane.optics.frame.Frame;
+import art.arcane.wormholes.portal.TraversableType;
+import art.arcane.wormholes.portal.Traversive;
+import art.arcane.optics.math.Face;
+
+import org.bukkit.entity.Player;
+import org.bukkit.util.Vector;
+import org.junit.jupiter.api.Test;
+
+import java.lang.reflect.Proxy;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+class TraversalArrivalPlacerDispatchTest {
+    @Test
+    void arrivalPlacementIsPushedOffTheJoinEventStackBeforeItTeleports() {
+        List<Long> delays = new ArrayList<>();
+        PlayerHandoffAdmission admissions = new PlayerHandoffAdmission();
+        TraversalArrivalPlacer placer = new TraversalArrivalPlacer(new TraversalArrivalPlacer.Services(
+            null,
+            admissions,
+            new TraversalFailureLedger(new TraversalFailureLedger.Options(() -> Settings.DEBUG, Wormholes::v, Wormholes::w)),
+            new TraversalNotices(),
+            (entity, task, retired, delayTicks) -> {
+                delays.add(Long.valueOf(delayTicks));
+                return true;
+            },
+            task -> {
+                task.run();
+                return true;
+            },
+            (reservation, arrived, detail) -> { }
+        ));
+        UUID playerId = UUID.randomUUID();
+
+        placer.place(player(playerId), reservation(admissions, playerId), "join");
+
+        assertEquals(List.of(Long.valueOf(1L)), delays,
+            "the arrival teleport must never run inline on the PlayerJoinEvent stack");
+    }
+
+    @Test
+    void queuedArrivalDoesNothingAfterItsLifecycleCloses() {
+        List<Runnable> tasks = new ArrayList<Runnable>();
+        AtomicBoolean active = new AtomicBoolean(true);
+        TraversalFailureLedger failures = new TraversalFailureLedger(new TraversalFailureLedger.Options(() -> Settings.DEBUG, Wormholes::v, Wormholes::w));
+        PlayerHandoffAdmission admissions = new PlayerHandoffAdmission();
+        TraversalArrivalPlacer placer = new TraversalArrivalPlacer(new TraversalArrivalPlacer.Services(
+            null,
+            admissions,
+            failures,
+            new TraversalNotices(),
+            (entity, task, retired, delayTicks) -> {
+                tasks.add(task);
+                return true;
+            },
+            task -> {
+                if (!active.get()) {
+                    return false;
+                }
+                task.run();
+                return true;
+            },
+            (reservation, arrived, detail) -> { }
+        ));
+        UUID playerId = UUID.randomUUID();
+
+        placer.place(player(playerId), reservation(admissions, playerId), "join");
+        active.set(false);
+        tasks.removeFirst().run();
+
+        assertEquals(0L, failures.failed());
+        assertEquals(0, tasks.size());
+    }
+
+    private static PlayerHandoffAdmission.Reservation reservation(PlayerHandoffAdmission admissions, UUID playerId) {
+        PlayerHandoffAdmission.Request request = new PlayerHandoffAdmission.Request(
+            UUID.randomUUID(),
+            playerId,
+            "traveler",
+            "beta",
+            UUID.randomUUID(),
+            false, false,
+            Traversive.toWire(traversive())
+        );
+        long now = System.currentTimeMillis();
+        admissions.decide(new PlayerHandoffAdmission.Attempt(request, null, now, 60_000L, 1_000L));
+        return admissions.claimArrival(playerId, now);
+    }
+
+    private static Traversive traversive() {
+        return new Traversive(
+            null,
+            TraversableType.PLAYER,
+            Frame.canonical(Face.N),
+            new Vector(0.0D, 64.0D, 0.0D),
+            new Vector(0.0D, 64.0D, 0.0D),
+            new Vector(0.0D, 0.0D, 1.0D),
+            new Vector(0.0D, 0.0D, 1.0D)
+        );
+    }
+
+    private static Player player(UUID playerId) {
+        return (Player) Proxy.newProxyInstance(
+            TraversalArrivalPlacerDispatchTest.class.getClassLoader(),
+            new Class<?>[]{Player.class},
+            (proxy, method, arguments) -> switch (method.getName()) {
+                case "getUniqueId" -> playerId;
+                case "getName" -> "traveler";
+                case "isOnline", "isValid" -> Boolean.TRUE;
+                case "equals" -> Boolean.valueOf(proxy == arguments[0]);
+                case "hashCode" -> Integer.valueOf(System.identityHashCode(proxy));
+                case "toString" -> "ArrivalTestPlayer[" + playerId + "]";
+                default -> defaultValue(method.getReturnType());
+            }
+        );
+    }
+
+    private static Object defaultValue(Class<?> type) {
+        if (!type.isPrimitive()) {
+            return null;
+        }
+        if (type == boolean.class) {
+            return Boolean.FALSE;
+        }
+        if (type == char.class) {
+            return Character.valueOf('\0');
+        }
+        if (type == byte.class) {
+            return Byte.valueOf((byte) 0);
+        }
+        if (type == short.class) {
+            return Short.valueOf((short) 0);
+        }
+        if (type == int.class) {
+            return Integer.valueOf(0);
+        }
+        if (type == long.class) {
+            return Long.valueOf(0L);
+        }
+        if (type == float.class) {
+            return Float.valueOf(0.0F);
+        }
+        return Double.valueOf(0.0D);
+    }
+}

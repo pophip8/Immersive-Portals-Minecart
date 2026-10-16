@@ -1,0 +1,50 @@
+package art.arcane.wormholes.network;
+
+import org.junit.jupiter.api.Test;
+
+import java.io.ByteArrayInputStream;
+import java.io.DataInputStream;
+import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.UUID;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+
+class ViewBulkCompleteWireTest {
+    private static WireMessage roundTrip(WireMessage message) throws IOException {
+        byte[] frame = WireCodec.encodeFrame(message);
+        return WireCodec.readFrame(new DataInputStream(new ByteArrayInputStream(frame)));
+    }
+
+    @Test
+    void viewBulkCompleteRoundTripsPortalId() throws IOException {
+        UUID portalId = UUID.randomUUID();
+        WireMessage.ViewBulkComplete decoded = assertInstanceOf(WireMessage.ViewBulkComplete.class,
+            roundTrip(new WireMessage.ViewBulkComplete(portalId)));
+        assertEquals(portalId, decoded.portalId());
+    }
+
+    @Test
+    void portalSettingsUpdateRoundTripsKeyedMap() throws IOException {
+        UUID portalId = UUID.randomUUID();
+        Map<String, String> settings = new LinkedHashMap<>();
+        settings.put(PortalSettingsCodec.KEY_PROJECTION_MODE, "MIRROR");
+        settings.put(PortalSettingsCodec.KEY_PROJECTION_ENABLED, "false");
+        settings.put(PortalSettingsCodec.KEY_MIRROR_MODE, "true");
+        settings.put(PortalSettingsCodec.KEY_MIRROR_ROTATION, "90");
+        settings.put(PortalSettingsCodec.KEY_VIEW_DEPTH, "24");
+        settings.put(PortalSettingsCodec.KEY_OUTGOING_TRAVERSALS, "false");
+        WireMessage.PortalSettingsUpdate decoded = assertInstanceOf(WireMessage.PortalSettingsUpdate.class,
+            roundTrip(new WireMessage.PortalSettingsUpdate(portalId, settings)));
+        assertEquals(portalId, decoded.portalId());
+        assertEquals(6, decoded.settings().size());
+        assertEquals("MIRROR", decoded.settings().get(PortalSettingsCodec.KEY_PROJECTION_MODE));
+        assertEquals("false", decoded.settings().get(PortalSettingsCodec.KEY_PROJECTION_ENABLED));
+        assertEquals("true", decoded.settings().get(PortalSettingsCodec.KEY_MIRROR_MODE));
+        assertEquals("90", decoded.settings().get(PortalSettingsCodec.KEY_MIRROR_ROTATION));
+        assertEquals("24", decoded.settings().get(PortalSettingsCodec.KEY_VIEW_DEPTH));
+        assertEquals("false", decoded.settings().get(PortalSettingsCodec.KEY_OUTGOING_TRAVERSALS));
+    }
+}

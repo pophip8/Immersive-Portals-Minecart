@@ -1,0 +1,937 @@
+/*
+ *  Copyright (c) 2016-2025 Arcane Arts (Volmit Software)
+ *
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ *
+ */
+
+package art.arcane.volmlib.util.data;
+
+
+import art.arcane.volmlib.util.VolmLog;
+import art.arcane.volmlib.util.collection.KList;
+import art.arcane.volmlib.util.collection.KMap;
+import it.unimi.dsi.fastutil.ints.*;
+import org.bukkit.Bukkit;
+import org.bukkit.Material;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.Waterlogged;
+import org.bukkit.block.data.type.Leaves;
+
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import static org.bukkit.Material.*;
+
+public abstract class BSupport<P> {
+    private static final Class<?> SPELEOTHEM_CLASS = resolveSpeleothemClass();
+    private static final Method SPELEOTHEM_GET_THICKNESS = resolveSpeleothemGetThickness();
+
+    private final KMap<String, BlockData> custom = new KMap<>();
+
+    private final Material AIR_MATERIAL = Material.AIR;
+    private final BlockData AIR = AIR_MATERIAL.createBlockData();
+    private final IntSet foliageCache = buildFoliageCache();
+    private final IntSet deepslateCache = buildDeepslateCache();
+    private final Int2ObjectMap<Material> normal2DeepslateCache = buildNormal2DeepslateCache();
+    private final Int2ObjectMap<Material> deepslate2NormalCache = buildDeepslate2NormalCache();
+    private final IntSet decorantCache = buildDecorantCache();
+    private final IntSet storageCache = buildStorageCache();
+    private final IntSet storageChestCache = buildStorageChestCache();
+    private final IntSet litCache = buildLitCache();
+    private final UnresolvedKeyLog unresolved = new UnresolvedKeyLog("Block resolution", 30_000L);
+
+    protected void warn(String message) {
+        VolmLog.warning("BlockData", message);
+    }
+
+    protected void debug(String message) {
+        // Intentionally quiet by default.
+    }
+
+    protected void reportError(Throwable throwable) {
+        VolmLog.warning("BlockData", "Block-data resolution failed", throwable);
+    }
+
+    protected void error(String message) {
+        warn(message);
+    }
+
+    protected Material shortGrassMaterial() {
+        try {
+            return Material.valueOf("GRASS");
+        } catch (Throwable ignored) {
+            // Continue to older/newer material keys.
+        }
+
+        try {
+            return Material.valueOf("SHORT_GRASS");
+        } catch (Throwable ignored) {
+            return Material.AIR;
+        }
+    }
+
+    protected void appendExtraFoliageMaterials(IntSet foliage) {
+        // React has no extra foliage materials beyond Bukkit Material.
+    }
+
+    protected boolean includeLitInUpdatable() {
+        return true;
+    }
+
+    protected BlockData resolveCompatBlock(String bdxf) {
+        return null;
+    }
+
+    protected BlockData resolveExternalBlockData(String ix) {
+        return null;
+    }
+
+    protected boolean shouldPreventLeafDecay() {
+        return false;
+    }
+
+    protected void appendExternalBlockTypes(KList<String> blockTypes) {
+        // React has no external block identifier provider.
+    }
+
+    protected void appendExternalItemTypes(KList<String> itemTypes) {
+        // React has no external item identifier provider.
+    }
+
+    protected KMap<List<String>, List<P>> loadExternalBlockStates() {
+        return new KMap<>();
+    }
+
+    private void warnUnresolved(String key, String message) {
+        if (unresolved.firstOccurrence(key)) {
+            warn(message);
+        }
+        String summary = unresolved.pollSummary();
+        if (summary != null) {
+            warn(summary);
+        }
+    }
+
+    private IntSet buildFoliageCache() {
+        IntSet b = new IntOpenHashSet();
+        Arrays.stream(new Material[]{
+                POPPY,
+                DANDELION,
+                CORNFLOWER,
+                SWEET_BERRY_BUSH,
+                CRIMSON_ROOTS,
+                WARPED_ROOTS,
+                NETHER_SPROUTS,
+                ALLIUM,
+                AZURE_BLUET,
+                BLUE_ORCHID,
+                OXEYE_DAISY,
+                LILY_OF_THE_VALLEY,
+                WITHER_ROSE,
+                DARK_OAK_SAPLING,
+                ACACIA_SAPLING,
+                JUNGLE_SAPLING,
+                BIRCH_SAPLING,
+                SPRUCE_SAPLING,
+                OAK_SAPLING,
+                ORANGE_TULIP,
+                PINK_TULIP,
+                RED_TULIP,
+                WHITE_TULIP,
+                FERN,
+                LARGE_FERN,
+                shortGrassMaterial(),
+                TALL_GRASS
+        }).forEach((i) -> b.add(i.ordinal()));
+        appendExtraFoliageMaterials(b);
+
+        return IntSets.unmodifiable(b);
+    }
+
+    private IntSet buildDeepslateCache() {
+        IntSet b = new IntOpenHashSet();
+        Arrays.stream(new Material[]{
+                DEEPSLATE,
+                DEEPSLATE_BRICKS,
+                DEEPSLATE_BRICK_SLAB,
+                DEEPSLATE_BRICK_STAIRS,
+                DEEPSLATE_BRICK_WALL,
+                DEEPSLATE_TILE_SLAB,
+                DEEPSLATE_TILES,
+                DEEPSLATE_TILE_STAIRS,
+                DEEPSLATE_TILE_WALL,
+                CRACKED_DEEPSLATE_TILES,
+                DEEPSLATE_COAL_ORE,
+                DEEPSLATE_IRON_ORE,
+                DEEPSLATE_COPPER_ORE,
+                DEEPSLATE_DIAMOND_ORE,
+                DEEPSLATE_EMERALD_ORE,
+                DEEPSLATE_GOLD_ORE,
+                DEEPSLATE_LAPIS_ORE,
+                DEEPSLATE_REDSTONE_ORE
+        }).forEach((i) -> b.add(i.ordinal()));
+
+        return IntSets.unmodifiable(b);
+    }
+
+    private Int2ObjectMap<Material> buildNormal2DeepslateCache() {
+        Int2ObjectMap<Material> b = new Int2ObjectOpenHashMap<>();
+
+        b.put(COAL_ORE.ordinal(), DEEPSLATE_COAL_ORE);
+        b.put(EMERALD_ORE.ordinal(), DEEPSLATE_EMERALD_ORE);
+        b.put(DIAMOND_ORE.ordinal(), DEEPSLATE_DIAMOND_ORE);
+        b.put(COPPER_ORE.ordinal(), DEEPSLATE_COPPER_ORE);
+        b.put(GOLD_ORE.ordinal(), DEEPSLATE_GOLD_ORE);
+        b.put(IRON_ORE.ordinal(), DEEPSLATE_IRON_ORE);
+        b.put(LAPIS_ORE.ordinal(), DEEPSLATE_LAPIS_ORE);
+        b.put(REDSTONE_ORE.ordinal(), DEEPSLATE_REDSTONE_ORE);
+
+        return b;
+    }
+
+    private Int2ObjectMap<Material> buildDeepslate2NormalCache() {
+        Int2ObjectMap<Material> b = new Int2ObjectOpenHashMap<>();
+
+        b.put(DEEPSLATE_COAL_ORE.ordinal(), COAL_ORE);
+        b.put(DEEPSLATE_EMERALD_ORE.ordinal(), EMERALD_ORE);
+        b.put(DEEPSLATE_DIAMOND_ORE.ordinal(), DIAMOND_ORE);
+        b.put(DEEPSLATE_COPPER_ORE.ordinal(), COPPER_ORE);
+        b.put(DEEPSLATE_GOLD_ORE.ordinal(), GOLD_ORE);
+        b.put(DEEPSLATE_IRON_ORE.ordinal(), IRON_ORE);
+        b.put(DEEPSLATE_LAPIS_ORE.ordinal(), LAPIS_ORE);
+        b.put(DEEPSLATE_REDSTONE_ORE.ordinal(), REDSTONE_ORE);
+
+        return b;
+    }
+
+    private IntSet buildDecorantCache() {
+        IntSet b = new IntOpenHashSet();
+        Arrays.stream(new Material[]{
+                shortGrassMaterial(),
+                TALL_GRASS,
+                FERN,
+                LARGE_FERN,
+                CORNFLOWER,
+                SUNFLOWER,
+                CHORUS_FLOWER,
+                POPPY,
+                DANDELION,
+                OXEYE_DAISY,
+                ORANGE_TULIP,
+                PINK_TULIP,
+                RED_TULIP,
+                WHITE_TULIP,
+                LILAC,
+                DEAD_BUSH,
+                SWEET_BERRY_BUSH,
+                ROSE_BUSH,
+                WITHER_ROSE,
+                ALLIUM,
+                BLUE_ORCHID,
+                LILY_OF_THE_VALLEY,
+                CRIMSON_FUNGUS,
+                WARPED_FUNGUS,
+                RED_MUSHROOM,
+                BROWN_MUSHROOM,
+                CRIMSON_ROOTS,
+                AZURE_BLUET,
+                CACTUS,
+                WEEPING_VINES,
+                WEEPING_VINES_PLANT,
+                WARPED_ROOTS,
+                NETHER_SPROUTS,
+                TWISTING_VINES,
+                TWISTING_VINES_PLANT,
+                SUGAR_CANE,
+                WHEAT,
+                POTATOES,
+                CARROTS,
+                BEETROOTS,
+                NETHER_WART,
+                SEA_PICKLE,
+                SEAGRASS,
+                TALL_SEAGRASS,
+                ACACIA_BUTTON,
+                BIRCH_BUTTON,
+                CRIMSON_BUTTON,
+                DARK_OAK_BUTTON,
+                JUNGLE_BUTTON,
+                OAK_BUTTON,
+                POLISHED_BLACKSTONE_BUTTON,
+                SPRUCE_BUTTON,
+                STONE_BUTTON,
+                WARPED_BUTTON,
+                TORCH,
+                SOUL_TORCH,
+                GLOW_LICHEN,
+                VINE,
+                SCULK_VEIN
+        }).forEach((i) -> b.add(i.ordinal()));
+        b.addAll(foliageCache);
+
+        return IntSets.unmodifiable(b);
+    }
+
+    private IntSet buildLitCache() {
+        IntSet b = new IntOpenHashSet();
+        Arrays.stream(new Material[]{
+                GLOWSTONE,
+                AMETHYST_CLUSTER,
+                SMALL_AMETHYST_BUD,
+                MEDIUM_AMETHYST_BUD,
+                LARGE_AMETHYST_BUD,
+                END_ROD,
+                SOUL_SAND,
+                TORCH,
+                REDSTONE_TORCH,
+                SOUL_TORCH,
+                REDSTONE_WALL_TORCH,
+                WALL_TORCH,
+                SOUL_WALL_TORCH,
+                LANTERN,
+                CANDLE,
+                JACK_O_LANTERN,
+                REDSTONE_LAMP,
+                MAGMA_BLOCK,
+                LIGHT,
+                SHROOMLIGHT,
+                SEA_LANTERN,
+                SOUL_LANTERN,
+                FIRE,
+                SOUL_FIRE,
+                SEA_PICKLE,
+                BREWING_STAND,
+                REDSTONE_ORE,
+        }).forEach((i) -> b.add(i.ordinal()));
+
+        return IntSets.unmodifiable(b);
+    }
+
+    private IntSet buildStorageCache() {
+        IntSet b = new IntOpenHashSet();
+        Arrays.stream(new Material[]{
+                CHEST,
+                SMOKER,
+                TRAPPED_CHEST,
+                SHULKER_BOX,
+                WHITE_SHULKER_BOX,
+                ORANGE_SHULKER_BOX,
+                MAGENTA_SHULKER_BOX,
+                LIGHT_BLUE_SHULKER_BOX,
+                YELLOW_SHULKER_BOX,
+                LIME_SHULKER_BOX,
+                PINK_SHULKER_BOX,
+                GRAY_SHULKER_BOX,
+                LIGHT_GRAY_SHULKER_BOX,
+                CYAN_SHULKER_BOX,
+                PURPLE_SHULKER_BOX,
+                BLUE_SHULKER_BOX,
+                BROWN_SHULKER_BOX,
+                GREEN_SHULKER_BOX,
+                RED_SHULKER_BOX,
+                BLACK_SHULKER_BOX,
+                BARREL,
+                DISPENSER,
+                DROPPER,
+                HOPPER,
+                FURNACE,
+                BLAST_FURNACE
+        }).forEach((i) -> b.add(i.ordinal()));
+
+        for (Material material : Material.values()) {
+            if (material.name().endsWith("COPPER_CHEST")) {
+                b.add(material.ordinal());
+            }
+        }
+        return IntSets.unmodifiable(b);
+    }
+
+    public BlockData toDeepSlateOre(BlockData block, BlockData ore) {
+        int key = ore.getMaterial().ordinal();
+        Material target = (isDeepSlate(block) ? normal2DeepslateCache : deepslate2NormalCache).get(key);
+        return target == null ? ore : target.createBlockData();
+    }
+
+    public boolean isDeepSlate(BlockData blockData) {
+        return deepslateCache.contains(blockData.getMaterial().ordinal());
+    }
+
+    public boolean isOre(BlockData blockData) {
+        return blockData.getMaterial().name().endsWith("_ORE");
+    }
+
+    private IntSet buildStorageChestCache() {
+        IntSet b = new IntOpenHashSet(storageCache);
+        b.remove(SMOKER.ordinal());
+        b.remove(FURNACE.ordinal());
+        b.remove(BLAST_FURNACE.ordinal());
+
+        return IntSets.unmodifiable(b);
+    }
+
+    public boolean canPlaceOnto(Material mat, Material onto) {
+        if (mat == SUGAR_CANE) {
+            if (onto.name().equals("PALE_MOSS_BLOCK")) {
+                return true;
+            }
+            return switch (onto) {
+                case SUGAR_CANE, GRASS_BLOCK, DIRT, COARSE_DIRT, PODZOL, MYCELIUM, ROOTED_DIRT,
+                        MOSS_BLOCK, MUD, MUDDY_MANGROVE_ROOTS, SAND, RED_SAND,
+                        SUSPICIOUS_SAND -> true;
+                default -> false;
+            };
+        }
+
+        if (mat.equals(CACTUS)) {
+            return onto.equals(CACTUS) || onto.equals(SAND) || onto.equals(RED_SAND);
+        }
+
+        if ((onto.equals(CRIMSON_NYLIUM) || onto.equals(WARPED_NYLIUM) || onto.equals(SOUL_SOIL)) &&
+                (mat.equals(CRIMSON_FUNGUS) || mat.equals(CRIMSON_ROOTS) || mat.equals(WARPED_FUNGUS)
+                        || mat.equals(WARPED_ROOTS) || mat.equals(NETHER_SPROUTS))) {
+            return true;
+        }
+
+        if (isFoliage(mat)) {
+            if (!isFoliagePlantable(onto)) {
+                return false;
+            }
+        }
+
+        if (onto.equals(Material.AIR) ||
+                onto.equals(getMaterial("CAVE_AIR"))
+                || onto.equals(getMaterial("VOID_AIR"))) {
+            return false;
+        }
+
+        if (onto.equals(Material.GRASS_BLOCK) && mat.equals(Material.DEAD_BUSH)) {
+            return false;
+        }
+
+        if (onto.equals(Material.DIRT_PATH)) {
+            if (!mat.isSolid()) {
+                return false;
+            }
+        }
+
+        if (onto.equals(Material.ACACIA_LEAVES)
+                || onto.equals(Material.BIRCH_LEAVES)
+                || onto.equals(Material.DARK_OAK_LEAVES)
+                || onto.equals(Material.JUNGLE_LEAVES)
+                || onto.equals(Material.OAK_LEAVES)
+                || onto.equals(Material.SPRUCE_LEAVES)) {
+            return mat.isSolid();
+        }
+
+        return true;
+    }
+
+    public boolean isFoliagePlantable(BlockData d) {
+        return d.getMaterial().equals(Material.GRASS_BLOCK)
+                || d.getMaterial().equals(Material.MOSS_BLOCK)
+                || d.getMaterial().equals(Material.ROOTED_DIRT)
+                || d.getMaterial().equals(Material.DIRT)
+                || d.getMaterial().equals(Material.COARSE_DIRT)
+                || d.getMaterial().equals(Material.PODZOL);
+    }
+
+    public boolean isFoliagePlantable(Material d) {
+        return d.equals(Material.GRASS_BLOCK)
+                || d.equals(Material.MOSS_BLOCK)
+                || d.equals(Material.DIRT)
+                || d.equals(TALL_GRASS)
+                || d.equals(TALL_SEAGRASS)
+                || d.equals(LARGE_FERN)
+                || d.equals(SUNFLOWER)
+                || d.equals(PEONY)
+                || d.equals(LILAC)
+                || d.equals(ROSE_BUSH)
+                || d.equals(Material.ROOTED_DIRT)
+                || d.equals(Material.COARSE_DIRT)
+                || d.equals(Material.PODZOL);
+    }
+
+    public boolean isWater(BlockData b) {
+        return b.getMaterial().equals(Material.WATER);
+    }
+
+    public BlockData getAir() {
+        return AIR;
+    }
+
+    public Material getMaterialOrNull(String bdx) {
+        try {
+            return Material.valueOf(bdx.trim().toUpperCase());
+        } catch (Throwable e) {
+            reportError(e);
+            warnUnresolved("material:" + bdx, "Unknown Material: " + bdx);
+            return null;
+        }
+    }
+
+    public Material getMaterial(String bdx) {
+        Material m = getMaterialOrNull(bdx);
+
+        if (m == null) {
+            return AIR_MATERIAL;
+        }
+
+        return m;
+    }
+
+    public boolean isSolid(BlockData mat) {
+        if (mat == null)
+            return false;
+        return mat.getMaterial().isSolid();
+    }
+
+    public BlockData getOrNull(String bdxf) {
+        return getOrNull(bdxf, false);
+    }
+
+    /**
+     * Resolves a block key with the historical air fallback: a key that is well formed but not registered comes back
+     * as air, not null, so this method cannot tell an unknown block from a deliberate air block. Null still comes back
+     * when resolution throws.
+     * <p>
+     * The air fallback is load bearing for world generation. {@link #get(String)} routes through
+     * {@link #resolveCompatBlock(String)}, and on Iris that hook starts by calling this method and only falls through
+     * to its legacy key rewrite table - hundreds of entries mapping keys that Minecraft renamed - when this method
+     * answers null. Returning null for an unregistered key would therefore switch that table on, and since it exists
+     * on Bukkit only, the same pack and seed would generate different blocks on Bukkit than on the modded platforms.
+     * <p>
+     * Callers that must tell absence from air use {@link #resolveOrNull(String, boolean)}.
+     */
+    public BlockData getOrNull(String bdxf, boolean warn) {
+        try {
+            BlockData direct = resolveDirectKey(bdxf.trim());
+
+            if (direct != null) {
+                return direct;
+            }
+
+            String bd = canonicalKey(bdxf);
+            BlockData bdx = parseBlockData(bd, warn);
+
+            if (bdx == null) {
+                if (warn) {
+                    warnUnresolved(bd, "Unknown Block Data '" + bd + "'");
+                }
+                return AIR;
+            }
+
+            return bdx;
+        } catch (Throwable e) {
+            reportError(e);
+            if (warn) {
+                warnUnresolved(bdxf, "Unknown Block Data '" + bdxf + "'");
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolves a block key strictly: null when nothing claims the key, never an air substitute. This is the lookup
+     * behind absence-sensitive callers - schema and pack validation, NBT round trips, and any caller that has its own
+     * fallback for an unresolved key. It does not consult {@link #resolveCompatBlock(String)}, so it stays off the
+     * generation path and cannot fork block output between platforms.
+     */
+    public BlockData resolveOrNull(String bdxf, boolean warn) {
+        try {
+            BlockData direct = resolveDirectKey(bdxf.trim());
+
+            if (direct != null) {
+                return direct;
+            }
+
+            String bd = canonicalKey(bdxf);
+            BlockData bdx = parseBlockData(bd, warn);
+
+            if (bdx == null && warn) {
+                warnUnresolved(bd, "Unknown Block Data '" + bd + "'");
+            }
+
+            return bdx;
+        } catch (Throwable e) {
+            reportError(e);
+            if (warn) {
+                warnUnresolved(bdxf, "Unknown Block Data '" + bdxf + "'");
+            }
+        }
+
+        return null;
+    }
+
+    private String canonicalKey(String bdxf) {
+        String bd = bdxf.trim();
+
+        if (bd.startsWith("minecraft:cauldron[level=")) {
+            bd = bd.replaceAll("\\Q:cauldron[\\E", ":water_cauldron[");
+        }
+
+        return bd;
+    }
+
+    private BlockData resolveDirectKey(String bd) {
+        if (!custom.isEmpty() && custom.containsKey(bd)) {
+            return custom.get(bd);
+        }
+
+        if (bd.equals("minecraft:grass_path")) {
+            return DIRT_PATH.createBlockData();
+        }
+
+        return null;
+    }
+
+    public BlockData decodeBlockData(String key) {
+        String normalized = key.trim();
+        BlockData direct = resolveDirectKey(normalized);
+        if (direct != null) {
+            return direct;
+        }
+        BlockData external = resolveExternalBlockData(normalized);
+        return external == null ? Bukkit.createBlockData(normalized) : external;
+    }
+
+    public BlockData getNoCompat(String bdxf) {
+        BlockData bd = getOrNull(bdxf, true);
+
+        if (bd != null) {
+            return bd;
+        }
+
+        return AIR;
+    }
+
+    public BlockData get(String bdxf) {
+        BlockData compat = resolveCompatBlock(bdxf);
+        if (compat != null) {
+            return compat;
+        }
+
+        return getNoCompat(bdxf);
+    }
+
+    private synchronized BlockData createBlockData(String s) {
+        return createBlockData(s, false);
+    }
+
+    private synchronized BlockData createBlockData(String s, boolean warn) {
+        try {
+            return Bukkit.createBlockData(s);
+        } catch (IllegalArgumentException e) {
+            if (s.contains("[")) {
+                return createBlockData(s.split("\\Q[\\E")[0], warn);
+            }
+        }
+
+        if (warn) {
+            warnUnresolved(s, "Can't find block data for " + s);
+        }
+        return null;
+    }
+
+    private BlockData parseBlockData(String ix) {
+        return parseBlockData(ix, false);
+    }
+
+    private BlockData parseBlockData(String ix, boolean warn) {
+        try {
+            BlockData bx = null;
+
+            if (bx == null) {
+                bx = resolveExternalBlockData(ix);
+            }
+
+            if (bx == null) {
+                try {
+                    bx = createBlockData(ix.toLowerCase(), warn);
+                } catch (Throwable e) {
+                    reportError(e);
+                }
+            }
+
+            if (bx == null) {
+                try {
+                    bx = createBlockData("minecraft:" + ix.toLowerCase(), warn);
+                } catch (Throwable e) {
+
+                }
+            }
+
+            if (bx == null) {
+                try {
+                    bx = Material.valueOf(ix.toUpperCase()).createBlockData();
+                } catch (Throwable e) {
+
+                }
+            }
+
+            if (bx == null) {
+                if (warn) {
+                    warnUnresolved(ix, "Unknown Block Data: " + ix);
+                }
+                return null;
+            }
+
+            if (bx instanceof Leaves) {
+                ((Leaves) bx).setPersistent(shouldPreventLeafDecay());
+            }
+
+            return bx;
+        } catch (Throwable e) {
+            String block = ix.contains(":") ? ix.split(":")[1].toLowerCase() : ix.toLowerCase();
+            String state = block.contains("[") ? block.split("\\Q[\\E")[1].split("\\Q]\\E")[0] : "";
+            Map<String, String> stateMap = new HashMap<>();
+            if (!state.equals("")) {
+                Arrays.stream(state.split(",")).forEach(s -> stateMap.put(s.split("=")[0], s.split("=")[1]));
+            }
+            block = block.split("\\Q[\\E")[0];
+
+            switch (block) {
+                case "cauldron" -> block = "water_cauldron";
+                case "grass_path" -> block = "dirt_path";
+                case "concrete" -> block = "white_concrete";
+                case "wool" -> block = "white_wool";
+                case "beetroots" -> {
+                    if (stateMap.containsKey("age")) {
+                        String updated = stateMap.get("age");
+                        switch (updated) {
+                            case "7" -> updated = "3";
+                            case "3", "4", "5" -> updated = "2";
+                            case "1", "2" -> updated = "1";
+                        }
+                        stateMap.put("age", updated);
+                    }
+                }
+            }
+
+            Map<String, String> newStates = new HashMap<>();
+            for (String key : stateMap.keySet()) { //Iterate through every state and check if its valid
+                try {
+                    String newState = block + "[" + key + "=" + stateMap.get(key) + "]";
+                    createBlockData(newState, false);
+                    newStates.put(key, stateMap.get(key));
+
+                } catch (IllegalArgumentException ignored) {
+                }
+            }
+
+            //Combine all the "good" states again
+            state = newStates.entrySet().stream().map(entry -> entry.getKey() + "=" + entry.getValue()).collect(Collectors.joining(","));
+            if (!state.equals("")) state = "[" + state + "]";
+            String newBlock = block + state;
+            debug("Converting " + ix + " to " + newBlock);
+
+            try {
+                return createBlockData(newBlock);
+            } catch (Throwable e1) {
+                reportError(e1);
+            }
+
+            return null;
+        }
+    }
+
+    public boolean isStorage(BlockData mat) {
+        return storageCache.contains(mat.getMaterial().ordinal());
+    }
+
+    public boolean isStorageChest(BlockData mat) {
+        return storageChestCache.contains(mat.getMaterial().ordinal());
+    }
+
+    public boolean isLit(BlockData mat) {
+        return litCache.contains(mat.getMaterial().ordinal());
+    }
+
+    public boolean isUpdatable(BlockData mat) {
+        return (includeLitInUpdatable() && isLit(mat))
+                || isStorage(mat)
+                || isSpeleothemTip(mat);
+    }
+
+    static boolean isSpeleothemTip(BlockData blockData) {
+        if (SPELEOTHEM_CLASS == null || !SPELEOTHEM_CLASS.isInstance(blockData)
+                || SPELEOTHEM_GET_THICKNESS == null) {
+            return false;
+        }
+        try {
+            Object value = SPELEOTHEM_GET_THICKNESS.invoke(blockData);
+            return value instanceof Enum<?> thickness && thickness.name().equals("TIP");
+        } catch (IllegalAccessException | InvocationTargetException exception) {
+            return false;
+        }
+    }
+
+    private static Class<?> resolveSpeleothemClass() {
+        try {
+            return Class.forName("org.bukkit.block.data.type.Speleothem");
+        } catch (ClassNotFoundException exception) {
+            try {
+                return Class.forName("org.bukkit.block.data.type.PointedDripstone");
+            } catch (ClassNotFoundException ignored) {
+                return null;
+            }
+        }
+    }
+
+    private static Method resolveSpeleothemGetThickness() {
+        if (SPELEOTHEM_CLASS == null) {
+            return null;
+        }
+        try {
+            return SPELEOTHEM_CLASS.getMethod("getThickness");
+        } catch (NoSuchMethodException exception) {
+            return null;
+        }
+    }
+
+    public boolean isFoliage(Material d) {
+        return foliageCache.contains(d.ordinal());
+    }
+
+    public boolean isFoliage(BlockData d) {
+        return isFoliage(d.getMaterial());
+    }
+
+    public boolean isDecorant(BlockData m) {
+        return decorantCache.contains(m.getMaterial().ordinal());
+    }
+
+    public KList<BlockData> get(KList<String> find) {
+        KList<BlockData> b = new KList<>();
+
+        for (String i : find) {
+            BlockData bd = get(i);
+
+            if (bd != null) {
+                b.add(bd);
+            }
+        }
+
+        return b;
+    }
+
+    public boolean isFluid(BlockData d) {
+        return d.getMaterial().equals(Material.WATER) || d.getMaterial().equals(Material.LAVA);
+    }
+
+    public boolean isAirOrFluid(BlockData d) {
+        return isAir(d) || isFluid(d);
+    }
+
+    public boolean isAir(BlockData d) {
+        if (d == null) {
+            return true;
+        }
+
+        return d.getMaterial().equals(Material.AIR) || d.getMaterial().equals(Material.CAVE_AIR) || d.getMaterial().equals(Material.VOID_AIR);
+    }
+
+
+    public synchronized String[] getBlockTypes() {
+        KList<String> bt = new KList<>();
+
+        for (Material i : Material.values()) {
+            if (!isModernMaterial(i)) {
+                continue;
+            }
+            if (i.isBlock()) {
+                String v = i.createBlockData().getAsString(true);
+
+                if (v.contains("[")) {
+                    v = v.split("\\Q[\\E")[0];
+                }
+
+                bt.add(v);
+            }
+        }
+
+        appendExternalBlockTypes(bt);
+        bt.addAll(custom.k());
+
+        return bt.toArray(new String[0]);
+    }
+
+    public synchronized KMap<List<String>, List<P>> getBlockStates() {
+        KMap<List<String>, List<P>> states = loadExternalBlockStates();
+        if (states == null) {
+            states = new KMap<>();
+        }
+
+        if (!custom.isEmpty()) {
+            List<String> emptyStateNames = null;
+            for (Map.Entry<List<String>, List<P>> entry : states.entrySet()) {
+                List<P> props = entry.getValue();
+                if (props == null || props.isEmpty()) {
+                    emptyStateNames = entry.getKey();
+                    break;
+                }
+            }
+
+            if (emptyStateNames == null) {
+                states.put(new KList<>(custom.k()), new KList<>());
+            } else {
+                emptyStateNames.addAll(custom.k());
+            }
+        }
+
+        return states;
+    }
+
+    public String[] getItemTypes() {
+        KList<String> bt = new KList<>();
+
+        for (Material i : Material.values()) {
+            if (!isModernMaterial(i)) {
+                continue;
+            }
+            String v = i.name().toLowerCase().trim();
+            bt.add(v);
+        }
+
+        appendExternalItemTypes(bt);
+
+        return bt.toArray(new String[0]);
+    }
+
+    static boolean isModernMaterial(Material material) {
+        return material != null && !material.isLegacy();
+    }
+
+    public boolean isWaterLogged(BlockData b) {
+        return (b instanceof Waterlogged) && ((Waterlogged) b).isWaterlogged();
+    }
+
+    public void registerCustomBlockData(String namespace, String key, BlockData blockData) {
+        custom.put(namespace + ":" + key, blockData);
+    }
+
+    public boolean isVineBlock(BlockData data) {
+        return switch (data.getMaterial()) {
+            case VINE, SCULK_VEIN, GLOW_LICHEN -> true;
+            default -> false;
+        };
+    }
+}

@@ -1,0 +1,453 @@
+package art.arcane.wormholes.service;
+
+import art.arcane.volmlib.util.director.DirectorEngineOptions;
+import art.arcane.volmlib.util.director.compat.BukkitDirectorContext;
+import art.arcane.volmlib.util.localization.LanguageAudience;
+import art.arcane.volmlib.util.localization.MessageArgs;
+import art.arcane.volmlib.util.localization.TextKey;
+import art.arcane.volmlib.util.director.compat.DirectorEngineFactory;
+import art.arcane.volmlib.util.director.context.DirectorContextRegistry;
+import art.arcane.volmlib.util.director.help.DirectorMiniMenu;
+import art.arcane.volmlib.util.director.runtime.DirectorExecutionMode;
+import art.arcane.volmlib.util.director.runtime.DirectorExecutionResult;
+import art.arcane.volmlib.util.director.runtime.DirectorInvocation;
+import art.arcane.volmlib.util.director.runtime.DirectorInvocationHook;
+import art.arcane.volmlib.util.director.runtime.DirectorRuntimeEngine;
+import art.arcane.volmlib.util.director.runtime.DirectorRuntimeMessages;
+import art.arcane.volmlib.util.director.runtime.DirectorRuntimeNode;
+import art.arcane.volmlib.util.director.runtime.DirectorSender;
+import art.arcane.volmlib.util.director.theme.DirectorProduct;
+import art.arcane.volmlib.util.director.theme.DirectorTheme;
+import art.arcane.volmlib.util.director.theme.DirectorThemes;
+import art.arcane.volmlib.util.plugin.ComponentMessenger;
+import art.arcane.volmlib.util.plugin.ComponentText;
+import art.arcane.wormholes.Wormholes;
+import art.arcane.wormholes.commands.CommandServer;
+import art.arcane.wormholes.commands.CommandWormholes;
+import art.arcane.wormholes.localization.WormholesMessages;
+import art.arcane.wormholes.util.common.cache.AtomicCache;
+import org.bukkit.SoundCategory;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.CommandSender;
+import org.bukkit.command.PluginCommand;
+import org.bukkit.command.TabCompleter;
+import org.bukkit.entity.Player;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.logging.Level;
+
+public final class WormholesCommandService implements CommandExecutor, TabCompleter, DirectorInvocationHook {
+    private static final String ROOT_COMMAND = "wormholes";
+    private static final DirectorMiniMenu.Theme FEEDBACK_THEME = DirectorMiniMenu.Theme.fromDirectorTheme(
+        DirectorThemes.forProduct(DirectorProduct.WORMHOLES));
+    private static final List<String> ADMIN_COMMAND_PERMISSIONS = List.of(
+            "wormholes.admin",
+            "wormholes.admin.items",
+            "wormholes.admin.network",
+            "wormholes.admin.projection",
+            "wormholes.admin.reset",
+            "wormholes.admin.pocket",
+            "wormholes.admin.rules",
+            "wormholes.admin.access",
+            "wormholes.admin.nexus",
+            "wormholes.admin.portals",
+            "wormholes.admin.backup"
+    );
+
+    private final Wormholes plugin;
+    private final DirectorTheme theme;
+    private final AtomicCache<DirectorRuntimeEngine> directorCache = new AtomicCache<>();
+
+    public WormholesCommandService(Wormholes plugin) {
+        this.plugin = plugin;
+        this.theme = DirectorThemes.forProduct(DirectorProduct.WORMHOLES);
+    }
+
+    public void register() {
+        getDirector();
+        PluginCommand command = findBukkitCommand();
+        if (command != null) {
+            command.setExecutor(this);
+            command.setTabCompleter(this);
+            return;
+        }
+        registerPaperCommand();
+    }
+
+    private PluginCommand findBukkitCommand() {
+        try {
+            return plugin.getCommand(ROOT_COMMAND);
+        } catch (UnsupportedOperationException ignored) {
+            // Paper plugins register commands through LifecycleEvents.COMMANDS.
+            return null;
+        }
+    }
+
+    private void registerPaperCommand() {
+        try {
+            Class<?> registrarType = Class.forName(
+                "art.arcane.wormholes.service.PaperCommandRegistrar",
+                true,
+                getClass().getClassLoader()
+            );
+            Method register = registrarType.getDeclaredMethod("register", Wormholes.class, WormholesCommandService.class);
+            register.invoke(null, plugin, this);
+        } catch (InvocationTargetException exception) {
+            Throwable cause = exception.getCause() == null ? exception : exception.getCause();
+            throw new IllegalStateException("Paper command registration failed", cause);
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException("Paper command registrar is unavailable", exception);
+        } catch (LinkageError error) {
+            throw new IllegalStateException("Paper command APIs are unavailable", error);
+        }
+    }
+
+    public void invalidateCache() {
+        directorCache.invalidate();
+    }
+
+    public void close() {
+        invalidateCache();
+    }
+
+    @Override
+    public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, @NotNull String[] args) {
+        if (!command.getName().equalsIgnoreCase(ROOT_COMMAND)) {
+            return false;
+        }
+        return executeCommand(sender, label, args);
+    }
+
+    boolean executeCommand(CommandSender sender, String label, String[] args) {
+        if (args.length > 0 && "language".equalsIgnoreCase(args[0])) {
+            plugin.getLanguageSwitcher().command(sender, Arrays.copyOfRange(args, 1, args.length));
+            return true;
+        }
+        return LanguageAudience.call(sender instanceof Player player ? player.getUniqueId() : null,
+                () -> executeOwned(sender, label, args));
+    }
+
+    private boolean executeOwned(CommandSender sender, String label, String[] args) {
+        if (!(args.length > 0 && args[0].equalsIgnoreCase("debug") && sender.hasPermission("wormholes.debugdump"))
+            && !hasAdminCommandAccess(sender)) {
+            if (sendPublicCommandIfRequested(sender, args)) {
+                playInfoChime(sender);
+            } else {
+                WormholesAudience.sendMessage(sender, Wormholes.text().component(sender, WormholesMessages.COMMAND_NO_PERMISSION_USE));
+                playFailureChime(sender);
+            }
+            return true;
+        }
+
+        if (sendHelpIfRequested(sender, args)) {
+            playInfoChime(sender);
+            return true;
+        }
+
+        DirectorExecutionResult result = runDirector(sender, label, args);
+        if (result.isSuccess()) {
+            playSuccessChime(sender);
+            return true;
+        }
+
+        if (!result.isHandled() && isServerShorthand(args)) {
+            CommandServer.connectAndReport(sender, args[1]);
+            playInfoChime(sender);
+            return true;
+        }
+
+        if (!result.isHandled()) {
+            sendFeedback(sender, WormholesMessages.COMMAND_UNKNOWN);
+        }
+        playFailureChime(sender);
+        return true;
+    }
+
+    public static void sendFeedback(CommandSender sender, TextKey key) {
+        ComponentText message = ComponentText.component(Wormholes.text().component(sender, key));
+        ComponentMessenger.sendMarkup(sender, "<gradient:" + FEEDBACK_THEME.primaryLeft() + ":"
+            + FEEDBACK_THEME.primaryRight() + ">Wormholes > " + message.miniMessage() + "</gradient>");
+    }
+
+    static boolean isServerShorthand(String[] args) {
+        return args != null && args.length == 2 && "server".equalsIgnoreCase(args[0])
+            && args[1] != null && !args[1].isBlank() && args[1].indexOf('=') < 0;
+    }
+
+    @Nullable
+    @Override
+    public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String alias, @NotNull String[] args) {
+        if (!command.getName().equalsIgnoreCase(ROOT_COMMAND)) {
+            return List.of();
+        }
+        return tabComplete(sender, alias, args);
+    }
+
+    List<String> tabComplete(CommandSender sender, String alias, String[] args) {
+        if (args != null && args.length > 1 && "debug".equalsIgnoreCase(args[0]) && !hasAdminCommandAccess(sender)) {
+            if (!sender.hasPermission("wormholes.debugdump")) {
+                return List.of();
+            }
+            if (args.length == 2) {
+                return "dump".startsWith(args[1].toLowerCase(Locale.ROOT)) ? List.of("dump") : List.of();
+            }
+            return "dump".equalsIgnoreCase(args[1]) ? runDirectorTab(sender, alias, args) : List.of();
+        }
+        if (args != null && args.length > 1 && "language".equalsIgnoreCase(args[0])) {
+            return plugin.getLanguageSwitcher().complete(sender, Arrays.copyOfRange(args, 1, args.length));
+        }
+        if (!hasAdminCommandAccess(sender)) {
+            return publicTabCompletions(sender, args);
+        }
+        List<String> completions = runDirectorTab(sender, alias, args);
+        if (args != null && args.length == 2 && "server".equalsIgnoreCase(args[0])) {
+            completions = mergeServerNames(completions, args[1]);
+        }
+        return completions;
+    }
+
+    private static List<String> mergeServerNames(List<String> completions, String partial) {
+        String prefix = partial == null ? "" : partial.trim().toLowerCase(Locale.ROOT);
+        LinkedHashSet<String> merged = new LinkedHashSet<>(completions == null ? List.of() : completions);
+        for (String name : CommandServer.knownServerNames()) {
+            if (prefix.isEmpty() || name.toLowerCase(Locale.ROOT).startsWith(prefix)) {
+                merged.add(name);
+            }
+        }
+        return List.copyOf(merged);
+    }
+
+	private boolean sendPublicCommandIfRequested(CommandSender sender, String[] args) {
+		if(!isPublicCommandRequest(args)) {
+			return false;
+		}
+		if(isPublicInfoRequest(args)) {
+			new CommandWormholes(plugin).info(sender);
+			return true;
+		}
+		DirectorMiniMenu.Theme helpTheme = DirectorMiniMenu.Theme.fromDirectorTheme(theme);
+		List<String> lines = new ArrayList<>();
+		lines.add(DirectorMiniMenu.banner("/" + ROOT_COMMAND, helpTheme));
+		lines.addAll(Wormholes.text().miniMessageLines(WormholesMessages.COMMAND_PUBLIC_HELP));
+		lines.add(DirectorMiniMenu.bar(helpTheme));
+		DirectorMiniMenu.deliver(sender, lines);
+		return true;
+	}
+
+	static boolean isPublicCommandRequest(String[] args) {
+		return isPublicHelpRequest(args) || isPublicInfoRequest(args);
+	}
+
+	private static boolean isPublicHelpRequest(String[] args) {
+		return args == null || args.length == 0 || (args.length == 1 && isHelpWord(args[0]));
+	}
+
+	private static boolean isPublicInfoRequest(String[] args) {
+		return args != null && args.length == 1 && "info".equalsIgnoreCase(args[0]);
+	}
+
+	static List<String> publicTabCompletions(CommandSender sender, String[] args) {
+		if(args == null || args.length != 1) {
+			return List.of();
+		}
+		String prefix = args[0] == null ? "" : args[0].toLowerCase(Locale.ROOT);
+		boolean languageAllowed = sender.hasPermission("volmit.language.admin")
+                || sender instanceof Player && sender.hasPermission("volmit.language.self")
+                && sender.hasPermission("wormholes.language.self");
+        List<String> commands = new ArrayList<>(4);
+        commands.add("help");
+        commands.add("info");
+        if (languageAllowed) {
+            commands.add("language");
+        }
+        if (sender.hasPermission("wormholes.debugdump")) {
+            commands.add("debug");
+        }
+        return commands.stream().filter(value -> value.startsWith(prefix)).toList();
+	}
+
+    public static boolean hasAdminCommandAccess(CommandSender sender) {
+        if (sender == null) {
+            return false;
+        }
+        for (String permission : ADMIN_COMMAND_PERMISSIONS) {
+            if (sender.hasPermission(permission)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private DirectorRuntimeEngine getDirector() {
+        return directorCache.aquire(this::buildDirector);
+    }
+
+    private DirectorRuntimeEngine buildDirector() {
+        return DirectorEngineFactory.create(
+            new CommandWormholes(plugin),
+            DirectorEngineOptions.builder()
+                .contexts(buildDirectorContexts())
+                .dispatcher(this::dispatchDirector)
+                .invocationHook(this)
+                .textResolver((key, arguments) -> Wormholes.text().directorText(key, arguments))
+                .build()
+        );
+    }
+
+    private DirectorContextRegistry buildDirectorContexts() {
+        DirectorContextRegistry contexts = new DirectorContextRegistry();
+        contexts.register(CommandSender.class, (invocation, map) -> {
+            if (invocation.getSender() instanceof BukkitDirectorSender sender) {
+                return sender.sender();
+            }
+            return null;
+        });
+        contexts.register(Player.class, (invocation, map) -> {
+            if (invocation.getSender() instanceof BukkitDirectorSender sender && sender.sender() instanceof Player player) {
+                return player;
+            }
+            return null;
+        });
+        return contexts;
+    }
+
+    private void dispatchDirector(DirectorExecutionMode mode, Runnable runnable) {
+        runnable.run();
+    }
+
+    @Override
+    public void beforeInvoke(DirectorInvocation invocation, DirectorRuntimeNode node) {
+        if (invocation.getSender() instanceof BukkitDirectorSender sender) {
+            BukkitDirectorContext.touch(sender.sender());
+        }
+    }
+
+    @Override
+    public void afterInvoke(DirectorInvocation invocation, DirectorRuntimeNode node) {
+        BukkitDirectorContext.remove();
+    }
+
+    private DirectorExecutionResult runDirector(CommandSender sender, String label, String[] args) {
+        try {
+            return getDirector().execute(new DirectorInvocation(new BukkitDirectorSender(sender), label, Arrays.asList(args)));
+        } catch (Throwable e) {
+            plugin.getLogger().log(Level.SEVERE, "Director command execution failed", e);
+            MessageArgs arguments = MessageArgs.builder()
+                .untrusted("command", ROOT_COMMAND + " " + String.join(" ", args))
+                .untrusted("reason", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage())
+                .build();
+            String message = Wormholes.text().directorText(DirectorRuntimeMessages.EXECUTION_FAILED, arguments);
+            ComponentMessenger.sendLiteral(sender, message);
+            return DirectorExecutionResult.failure(message);
+        }
+    }
+
+    private List<String> runDirectorTab(CommandSender sender, String alias, String[] args) {
+        try {
+            return getDirector().tabComplete(new DirectorInvocation(new BukkitDirectorSender(sender), alias, Arrays.asList(args)));
+        } catch (Throwable e) {
+            plugin.getLogger().log(Level.WARNING, "Director tab completion failed", e);
+            return List.of();
+        }
+    }
+
+    private boolean sendHelpIfRequested(CommandSender sender, String[] args) {
+        Optional<DirectorMiniMenu.DirectorHelpPage> page = DirectorMiniMenu.resolveHelp(getDirector(), Arrays.asList(normalizeHelpArgs(args)));
+        if (page.isEmpty()) {
+            return false;
+        }
+
+        DirectorMiniMenu.Theme helpTheme = DirectorMiniMenu.Theme.fromDirectorTheme(theme);
+        DirectorMiniMenu.deliver(sender, page.get(), helpTheme, Wormholes.text().directorResolver());
+
+        return true;
+    }
+
+    static String[] normalizeHelpArgs(String[] args) {
+        if (args == null || args.length == 0) {
+            return new String[0];
+        }
+
+        List<String> normalized = new ArrayList<>(args.length);
+        for (int i = 0; i < args.length; i++) {
+            String arg = args[i];
+            if (!isHelpWord(arg)) {
+                normalized.add(arg);
+                continue;
+            }
+
+            String page = "1";
+            if (i + 1 < args.length && isPageToken(args[i + 1])) {
+                page = args[i + 1].trim();
+                i++;
+            }
+            normalized.add("help=" + page);
+        }
+
+        return normalized.toArray(new String[0]);
+    }
+
+    private static boolean isHelpWord(String value) {
+        return value != null && (value.equalsIgnoreCase("help") || value.equals("?"));
+    }
+
+    private static boolean isPageToken(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+
+        try {
+            Integer.parseInt(value.trim());
+            return true;
+        } catch (NumberFormatException ignored) {
+            return false;
+        }
+    }
+
+    private void playSuccessChime(CommandSender sender) {
+        if (sender instanceof Player player) {
+            player.playSound(player.getLocation(), theme.getSuccessSound(), SoundCategory.MASTER, 0.5f, 1.5f);
+        }
+    }
+
+    private void playFailureChime(CommandSender sender) {
+        if (sender instanceof Player player) {
+            player.playSound(player.getLocation(), theme.getErrorSound(), SoundCategory.MASTER, 0.4f, 0.6f);
+        }
+    }
+
+    private void playInfoChime(CommandSender sender) {
+        if (sender instanceof Player player) {
+            player.playSound(player.getLocation(), theme.getSuccessSound(), SoundCategory.MASTER, 0.4f, 1.0f);
+        }
+    }
+
+    private record BukkitDirectorSender(CommandSender sender) implements DirectorSender {
+        @Override
+        public String getName() {
+            return sender.getName();
+        }
+
+        @Override
+        public boolean isPlayer() {
+            return sender instanceof Player;
+        }
+
+        @Override
+        public void sendMessage(String message) {
+            if (message != null && !message.trim().isEmpty()) {
+                ComponentMessenger.sendLiteral(sender, message);
+            }
+        }
+    }
+}

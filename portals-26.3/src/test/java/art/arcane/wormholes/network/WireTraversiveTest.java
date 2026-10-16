@@ -1,0 +1,123 @@
+package art.arcane.wormholes.network;
+
+import art.arcane.optics.frame.Frame;
+import art.arcane.wormholes.portal.TraversableType;
+import art.arcane.wormholes.portal.Traversive;
+import art.arcane.optics.math.Face;
+import org.bukkit.util.Vector;
+import org.junit.jupiter.api.Test;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.util.UUID;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class WireTraversiveTest {
+    private static Traversive sampleTraversive(boolean frontSide) {
+        Frame inFrame = Frame.canonical(Face.N).view(frontSide);
+        Vector origin = new Vector(100.5D, 64.0D, -200.5D);
+        Vector point = new Vector(100.9D, 64.7D, -200.2D);
+        Vector velocity = new Vector(0.3D, -0.1D, -0.6D);
+        Vector look = new Vector(0.1D, 0.2D, -0.9D);
+        return new Traversive(new Object(), TraversableType.ENTITY, inFrame, origin, point, velocity, look, frontSide);
+    }
+
+    private static void assertVectorEquals(Vector expected, Vector actual) {
+        assertEquals(expected.getX(), actual.getX(), 1e-12D);
+        assertEquals(expected.getY(), actual.getY(), 1e-12D);
+        assertEquals(expected.getZ(), actual.getZ(), 1e-12D);
+    }
+
+    @Test
+    void wireRoundTripPreservesAllOutputMath() throws IOException {
+        for (boolean frontSide : new boolean[]{true, false}) {
+            Traversive original = sampleTraversive(frontSide);
+            WireTraversive wire = Traversive.toWire(original);
+
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            wire.write(new DataOutputStream(buffer));
+            WireTraversive decoded = WireTraversive.read(new DataInputStream(new ByteArrayInputStream(buffer.toByteArray())));
+
+            Traversive reconstructed = Traversive.fromWire(decoded, new Object());
+            for (Face outDirection : new Face[]{Face.N, Face.S, Face.E, Face.U}) {
+                Frame outFrame = Frame.canonical(outDirection);
+                Vector outOrigin = new Vector(-10.5D, 70.0D, 33.5D);
+                assertVectorEquals(original.getOutVelocity(outFrame), reconstructed.getOutVelocity(outFrame));
+                assertVectorEquals(original.getOutLook(outFrame), reconstructed.getOutLook(outFrame));
+                assertVectorEquals(original.getOutOffset(outFrame), reconstructed.getOutOffset(outFrame));
+                assertVectorEquals(original.getOutPoint(outFrame, outOrigin), reconstructed.getOutPoint(outFrame, outOrigin));
+            }
+        }
+    }
+
+    @Test
+    void handoffMessagesRoundTrip() throws IOException {
+        WireTraversive wire = Traversive.toWire(sampleTraversive(true));
+        UUID transferId = UUID.randomUUID();
+        UUID playerId = UUID.randomUUID();
+        UUID portalId = UUID.randomUUID();
+
+        WireMessage.HandoffRequest request = roundTrip(new WireMessage.HandoffRequest(transferId, playerId, "Psycho", portalId, true, true, false, wire));
+        assertEquals(transferId, request.transferId());
+        assertEquals(playerId, request.playerId());
+        assertEquals("Psycho", request.playerName());
+        assertEquals(portalId, request.destPortalId());
+        assertTrue(request.directTransfer());
+        assertTrue(request.onlineMode());
+        assertEquals(wire, request.traversive());
+
+        assertEquals(transferId, roundTrip(new WireMessage.HandoffAck(transferId)).transferId());
+        WireMessage.HandoffDeny deny = roundTrip(new WireMessage.HandoffDeny(transferId, "unknown portal", 1250L));
+        assertEquals("unknown portal", deny.reason());
+        assertEquals(1250L, deny.retryAfterMillis());
+        WireMessage.HandoffCancel cancel = roundTrip(new WireMessage.HandoffCancel(transferId, playerId));
+        assertEquals(transferId, cancel.transferId());
+        assertEquals(playerId, cancel.playerId());
+        WireMessage.HandoffRequest serverRequest = roundTrip(new WireMessage.HandoffRequest(
+            transferId, playerId, "Psycho", null, true, false, false, null));
+        assertEquals(null, serverRequest.destPortalId());
+        assertEquals(null, serverRequest.traversive());
+        assertFalse(serverRequest.onlineMode());
+        WireMessage.HandoffResult result = new WireMessage.HandoffResult(transferId, playerId, true, "arrived");
+        assertEquals(result, roundTrip(result));
+        WireMessage.HandoffStatus status = new WireMessage.HandoffStatus(transferId, playerId);
+        assertEquals(status, roundTrip(status));
+    }
+
+    @Test
+    void entityTransferMessagesRoundTrip() throws IOException {
+        WireTraversive wire = Traversive.toWire(sampleTraversive(false));
+        UUID transferId = UUID.randomUUID();
+        UUID portalId = UUID.randomUUID();
+        byte[] nbt = "{id:\"minecraft:item\",Item:{id:\"minecraft:diamond\",count:3}}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+        WireMessage.EntityTransfer transfer = roundTrip(new WireMessage.EntityTransfer(transferId, portalId, nbt, wire));
+        assertEquals(transferId, transfer.transferId());
+        assertEquals(portalId, transfer.destPortalId());
+        assertEquals(new String(nbt, java.nio.charset.StandardCharsets.UTF_8), new String(transfer.entitySnapshot(), java.nio.charset.StandardCharsets.UTF_8));
+        assertEquals(wire, transfer.traversive());
+
+        WireMessage.EntityTransferAck ack = roundTrip(new WireMessage.EntityTransferAck(transferId, true));
+        assertEquals(transferId, ack.transferId());
+        assertEquals(true, ack.accepted());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends WireMessage> T roundTrip(T message) throws IOException {
+        byte[] frame;
+        try {
+            frame = WireCodec.encodeFrame(message);
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+        WireMessage decoded = WireCodec.readFrame(new DataInputStream(new ByteArrayInputStream(frame)));
+        return (T) assertInstanceOf(message.getClass(), decoded);
+    }
+}

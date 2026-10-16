@@ -1,0 +1,169 @@
+import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
+
+abstract class VerifyModdedArtifact extends DefaultTask {
+    private static final List<String> renderHooks = ['net/minecraft/client/renderer/chunk/', 'SectionRenderDispatcher', 'SectionCompiler',
+                                'net/minecraft/client/renderer/LevelRenderer', 'RenderRegionCache']
+    private static final Set<String> portalRenderMixins = ['client.PortalLevelRendererMixin', 'client.PortalProjectionMixin', 'client.PortalLightmapMixin',
+                                     'client.MeshLevelExtractorMixin', 'client.MeshEntityRendererMixin', 'client.MeshFeatureWindingMixin',
+                                     'client.EndPortalSurfaceMixin', 'client.MeshBlockModelLighterMixin', 'client.MeshFluidLightingMixin',
+                                     'client.PortalShaderGameRendererMixin', 'client.PortalSkyRendererMixin',
+                                     'client.PreparedLevelAccess', 'client.PreparedLevelMetadataMixin',
+                                     'client.CrossingCameraMixin', 'client.SodiumPortalUniformsMixin',
+                                     'client.LocalMeshChunkMixin', 'client.StraddleOverlayMixin',
+                                     'client.ClientWorldAtmosphereAccess', 'client.ClientWorldFogAccess',
+                                     'client.ClientWorldGameRendererAccess', 'client.ClientWorldLightmapAccess',
+                                     'client.ClientWorldMinecraftAccess', 'client.ClientWorldMinecraftMixin',
+                                     'client.ClientWorldLevelRendererAccess', 'client.ClientWorldExtractorAccess',
+                                     'client.ClientWorldExtractorMixin', 'client.ClientWorldSkyAccess',
+                                     'client.ClientWorldCloudAccess', 'client.ClientWorldOcclusionAccess',
+                                     'client.PortalLevelRendererAccess', 'client.PortalGameRendererAccess',
+                                     'client.PortalLevelExtractorAccess', 'client.PortalLevelExtractorMixin',
+                                     'client.VanillaTerrainExtractorMixin', 'client.VanillaTerrainRendererAccess',
+                                     'client.VanillaTerrainRendererMixin',
+                                     'client.PortalClipShaderMixin', 'client.PortalClipProjectionMixin',
+                                     'client.PortalStencilPipelinesMixin', 'client.PortalClipIncludeMixin',
+                                     'client.PortalFeaturePipelineMixin', 'client.PortalDrawPassMixin',
+                                     'client.PortalStencilLayerTargetMixin',
+                                     'client.GravityRenderStateMixin', 'client.GravityEntityRendererMixin',
+                                     'client.GravityLivingRendererMixin', 'client.GravityAvatarRendererMixin'] as Set
+
+    @InputFile
+    @PathSensitive(PathSensitivity.NONE)
+    abstract RegularFileProperty getArtifact()
+
+    @Input
+    abstract Property<String> getMetadata()
+
+    @Input
+    abstract Property<String> getMinecraftVersion()
+
+    @Input
+    abstract Property<String> getLoaderVersion()
+
+    @Input
+    abstract Property<String> getLoaderRange()
+
+    @TaskAction
+    void verify() {
+        File artifact = getArtifact().get().asFile
+        new java.util.jar.JarFile(artifact).withCloseable { java.util.jar.JarFile archive ->
+            String metadata = getMetadata().get()
+            for (String required : [metadata, 'wormholes-target.properties', 'art/arcane/wormholes/modded/WormholesModRuntime.class',
+                                    'art/arcane/wormholes/network/WireCodec.class',
+                                    'art/arcane/optics/frame/Frame.class',
+                                    'art/arcane/optics/spi/OpticsMetrics.class']) {
+                if (archive.getEntry(required) == null) {
+                    throw new GradleException("${artifact.name} is missing ${required}")
+                }
+            }
+            Properties target = new Properties()
+            archive.getInputStream(archive.getJarEntry('wormholes-target.properties')).withCloseable { InputStream stream ->
+                target.load(stream)
+            }
+            String minecraftVersion = getMinecraftVersion().get()
+            if (target.getProperty('minecraft') != minecraftVersion || target.getProperty('loaderVersion') != getLoaderVersion().get()) {
+                throw new GradleException("${artifact.name} contains metadata for a different Minecraft or loader target")
+            }
+            String loaderMetadata = archive.getInputStream(archive.getJarEntry(metadata)).withCloseable { InputStream stream ->
+                stream.getText('UTF-8')
+            }
+            if (loaderMetadata.contains('${')) {
+                throw new GradleException("${artifact.name} contains unexpanded loader metadata")
+            }
+            if (metadata == 'fabric.mod.json') {
+                Map<String, Object> fabricMetadata = (Map<String, Object>) new groovy.json.JsonSlurper().parseText(loaderMetadata)
+                Map<String, Object> dependencies = (Map<String, Object>) fabricMetadata['depends']
+                if (dependencies['minecraft'] != minecraftVersion || dependencies['fabricloader'] != ">=${getLoaderVersion().get()}") {
+                    throw new GradleException("${artifact.name} declares an incorrect Minecraft or Fabric loader version")
+                }
+            } else if (!loaderMetadata.contains('versionRange = "[' + minecraftVersion + ']"')
+                || !loaderMetadata.contains('versionRange = "' + getLoaderRange().get() + '"')) {
+                throw new GradleException("${artifact.name} declares an incorrect Minecraft or mod loader version range")
+            }
+            Set<String> classes = new HashSet<>()
+            archive.entries().each { java.util.jar.JarEntry entry ->
+                if (entry.name.endsWith('.class') && !classes.add(entry.name)) {
+                    throw new GradleException("${artifact.name} contains duplicate class ${entry.name}")
+                }
+                if (entry.name.startsWith('art/arcane/wormholes/')
+                    && (entry.name.contains('/gametest/') || entry.name.contains('GameTest')
+                        || entry.name.endsWith('/NativeHandoffProbe.class'))) {
+                    throw new GradleException("${artifact.name} contains test fixture ${entry.name}")
+                }
+                if (entry.name == 'plugin.yml' || entry.name == 'paper-plugin.yml'
+                    || entry.name.startsWith('org/bukkit/') || entry.name.startsWith('io/papermc/')) {
+                    throw new GradleException("${artifact.name} contains Bukkit runtime entry ${entry.name}")
+                }
+                if (entry.name.startsWith('art/arcane/volmlib/') || entry.name.startsWith('net/kyori/')) {
+                    throw new GradleException("${artifact.name} bundles unrelocated shared library entry ${entry.name}")
+                }
+                boolean opticsClass = entry.name.startsWith('art/arcane/optics/')
+                if ((opticsClass || entry.name.startsWith('art/arcane/wormholes/')) && entry.name.endsWith('.class')) {
+                    String constants = archive.getInputStream(entry).withCloseable { InputStream stream ->
+                        new String(stream.readAllBytes(), java.nio.charset.StandardCharsets.ISO_8859_1)
+                    }
+                    if (constants.contains('org/bukkit/') || constants.contains('io/papermc/')) {
+                        throw new GradleException("${artifact.name} references a Bukkit API in ${entry.name}")
+                    }
+                    if (constants.contains('art/arcane/volmlib/') || constants.contains('net/kyori/')) {
+                        throw new GradleException("${artifact.name} references an unrelocated shared library in ${entry.name}")
+                    }
+                    for (String renderHook : renderHooks) {
+                        if (constants.contains(renderHook) && (opticsClass
+                            || !entry.name.startsWith('art/arcane/wormholes/modded/client/render/')
+                            && !entry.name.startsWith('art/arcane/wormholes/modded/client/world/')
+                            && !(entry.name == 'art/arcane/wormholes/modded/client/ClientCrossingView.class'
+                                && renderHook == 'net/minecraft/client/renderer/LevelRenderer')
+                            && !portalRenderMixins.any { String name -> entry.name == "art/arcane/wormholes/modded/mixin/${name.replace('.', '/')}.class" })) {
+                            throw new GradleException("${artifact.name} references the render pipeline (${renderHook}) in ${entry.name}")
+                        }
+                    }
+                }
+            }
+            java.util.jar.JarEntry mixinConfig = archive.getJarEntry('wormholes.mixins.json')
+            if (mixinConfig == null) {
+                throw new GradleException("${artifact.name} is missing wormholes.mixins.json")
+            }
+            Map<String, Object> mixins = (Map<String, Object>) new groovy.json.JsonSlurper().parse(archive.getInputStream(mixinConfig))
+            String mixinPackage = ((String) mixins['package']).replace('.', '/')
+            for (String clientMixin : (List<String>) (mixins['client'] ?: [])) {
+                String mixinPath = "${mixinPackage}/${clientMixin.replace('.', '/')}.class"
+                java.util.jar.JarEntry mixinEntry = archive.getJarEntry(mixinPath)
+                if (mixinEntry == null) {
+                    throw new GradleException("${artifact.name} is missing client mixin ${mixinPath}")
+                }
+                String mixinConstants = archive.getInputStream(mixinEntry).withCloseable { InputStream stream ->
+                    new String(stream.readAllBytes(), java.nio.charset.StandardCharsets.ISO_8859_1)
+                }
+                if (mixinConstants.contains('Lnet/minecraft/client/renderer/') && !portalRenderMixins.contains(clientMixin)) {
+                    throw new GradleException("${artifact.name} client mixin ${clientMixin} references net.minecraft.client.renderer")
+                }
+            }
+        }
+    }
+}
+
+tasks.register('verifyModdedArtifact', VerifyModdedArtifact) {
+    group = 'verification'
+    description = 'Verifies loader metadata, shading, fixtures, and rendering boundaries in the runtime jar.'
+    dependsOn(tasks.named('shadowJar'))
+    artifact.set(tasks.named('shadowJar').flatMap { task -> task.archiveFile })
+    minecraftVersion.set(project.ext.minecraftTargetVersion)
+    String loader = project.projectDir.name
+    Map<String, String> versionKeys = [fabric: 'fabricLoaderVersion', forge: 'forgeVersion', neoforge: 'neoForgeVersion']
+    Map<String, Object> target = project.ext.minecraftTarget
+    loaderVersion.set(providers.gradleProperty(versionKeys[loader]).getOrElse(((Map<String, String>) target['loaders'])[loader]))
+    loaderRange.set(loader == 'forge' ? (String) target['forgeLoaderRange'] : loader == 'neoforge' ? (String) target['neoForgeRange'] : '')
+}
+
+tasks.named('check').configure {
+    dependsOn(tasks.named('verifyModdedArtifact'))
+}

@@ -1,0 +1,985 @@
+package art.arcane.wormholes;
+
+import art.arcane.wormholes.render.BukkitProjectionOutput;
+import org.bukkit.block.data.BlockData;
+import art.arcane.wormholes.hook.ProjectionSource;
+import art.arcane.wormholes.hook.WormholesHooks;
+import java.lang.reflect.Constructor;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
+import java.util.logging.Level;
+
+import org.bukkit.Bukkit;
+import org.bukkit.plugin.Plugin;
+import org.bukkit.Location;
+import org.bukkit.World;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.EntityShootBowEvent;
+import org.bukkit.event.player.PlayerAnimationEvent;
+import org.bukkit.event.player.PlayerAnimationType;
+import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.projectiles.ProjectileSource;
+import org.bukkit.util.Vector;
+
+import com.github.retrooper.packetevents.PacketEvents;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityAnimation.EntityAnimationType;
+
+import art.arcane.volmlib.util.scheduling.FoliaScheduler;
+import art.arcane.wormholes.config.WormholesSettings;
+import art.arcane.wormholes.platform.BukkitOpticsScheduler;
+import art.arcane.wormholes.portal.ILocalPortal;
+import art.arcane.wormholes.portal.DimensionalPortalKind;
+import art.arcane.wormholes.portal.vanilla.BukkitEndReturnPreview;
+import art.arcane.wormholes.portal.rtp.RtpProjectionView;
+import art.arcane.wormholes.portal.rtp.RtpRimRenderer;
+import art.arcane.wormholes.portal.rtp.RtpRotationMode;
+import art.arcane.wormholes.network.view.ViewServer;
+import art.arcane.optics.occlusion.LocalOcclusionArbiter;
+import art.arcane.wormholes.render.PortalProjector;
+import art.arcane.optics.entity.EntityAnimation;
+import art.arcane.wormholes.render.PortalSkinRenderer;
+import art.arcane.wormholes.render.ProjectionClaimArbiter;
+import art.arcane.wormholes.render.FidelitySettings;
+import art.arcane.wormholes.render.FidelitySubsystem;
+import art.arcane.wormholes.render.ProjectionClientChunkTracker;
+import art.arcane.optics.fidelity.AcousticsBridge;
+import art.arcane.wormholes.render.bedrock.ClientProfileService;
+import art.arcane.optics.stream.ViewStreamOptions;
+import art.arcane.wormholes.config.toml.ClientViewConfig;
+import art.arcane.wormholes.render.clientview.BukkitClientView;
+import art.arcane.wormholes.render.clientview.ClientViewRouting;
+import art.arcane.optics.plate.PlatePipeline;
+import art.arcane.optics.plate.ViewPlateCache;
+import art.arcane.wormholes.render.view.ProjectionWorldViewProvider;
+import art.arcane.wormholes.render.view.RegionSnapshotWorldViewProvider;
+import art.arcane.wormholes.render.BukkitEntityRegistryHost;
+import art.arcane.wormholes.service.WormholesTelemetry;
+import art.arcane.optics.math.Face;
+import art.arcane.wormholes.util.J;
+import art.arcane.optics.aperture.ObserverGeometry;
+
+public class ProjectionManager implements Listener {
+    private static final String OBSERVER_FRAME_DROPPED = "PROJECTION_OBSERVER_FRAME_DROPPED";
+    private static final String ENTITY_UPDATE_DROPPED = "PROJECTION_ENTITY_UPDATE_DROPPED";
+    private static final int TICK_INTERVAL_TICKS = 1;
+    private static final String TICK_END_EVENT_CLASS = "com.destroystokyo.paper.event.server.ServerTickEndEvent";
+    private static final String TICK_HEADROOM_LISTENER_CLASS = "art.arcane.wormholes.ProjectionTickHeadroomListener";
+    private static final long PLATE_INVALIDATION_INTERVAL_TICKS = 4L;
+    private static final long ACOUSTICS_AMBIENT_INTERVAL_TICKS = 20L;
+    private static final long OBSERVER_FRAME_SHUTDOWN_WAIT_MILLIS = 2_000L;
+    private static final AtomicLong DROPPED_OBSERVER_FRAMES = new AtomicLong();
+    private static final AtomicLong DROPPED_ENTITY_UPDATES = new AtomicLong();
+    private static final ObserverFrameScheduler ENTITY_FRAME_SCHEDULER = (observer, frame, retired) ->
+        FoliaScheduler.runEntity(Wormholes.instance, observer, frame, 0L, retired);
+    private static final EntityUpdateScheduler ENTITY_UPDATE_SCHEDULER = (observer, update, retired) ->
+        FoliaScheduler.runEntity(Wormholes.instance, observer, update, 0L, retired);
+    private final ProjectionClaimArbiter claimArbiter;
+    private final LocalOcclusionArbiter<Player, Entity> localEntityOcclusion;
+    private final ProjectionClientChunkTracker clientChunkTracker;
+    private final ProjectionWorldViewProvider viewProvider;
+    private final RtpRimRenderer rtpRimRenderer;
+    private final PortalSkinRenderer skinRenderer;
+    private final ProjectionInterestCloseQueue closeQueue;
+    private final ProjectionInterestSet interestSet;
+    private final ProjectionBudgetLedger budgetLedger;
+    private final ProjectionTickHeadroom tickHeadroom = new ProjectionTickHeadroom();
+    private final ProjectionInterestFrame observerFrame;
+    private final ProjectedEntityUpdateBatcher projectedEntityUpdates;
+    private final BukkitOpticsScheduler scheduler;
+    private final PlatePipeline<BlockData, World> platePipeline;
+    private final ViewPlateCache<BlockData, World> plateCache;
+    private final Set<UUID> observerTasksInFlight;
+    private final BukkitClientView clientView;
+    private final BukkitEndReturnPreview endReturnPreview;
+    private final AtomicBoolean shutdownFinalized;
+    private final AtomicBoolean shutdownStarted;
+    private long tickCount;
+    private boolean firstTickLogged;
+    private volatile boolean closed;
+    private volatile long projectionFrozenUntilMillis;
+    private volatile RtpProjectionProvider rtpProjectionProvider;
+    private int taskId;
+
+    public ProjectionManager(ProjectionClientChunkTracker clientChunkTracker, BukkitOpticsScheduler scheduler) {
+        this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
+        this.endReturnPreview = BukkitEndReturnPreview.create(Wormholes.instance);
+        this.viewProvider = FoliaScheduler.isFoliaThreading(Bukkit.getServer())
+            ? new RegionSnapshotWorldViewProvider(Wormholes.instance)
+            : ProjectionWorldViewProvider.sectionCached(Wormholes.instance, Wormholes.projectionChangeTracker);
+        this.clientChunkTracker = clientChunkTracker;
+        this.claimArbiter = new ProjectionClaimArbiter(viewProvider, new BukkitProjectionOutput(clientChunkTracker, this::observersOf));
+        this.localEntityOcclusion = BukkitEntityRegistryHost.occlusion(BukkitEntityRegistryHost.PLUGIN_VISIBILITY, scheduler);
+        this.rtpRimRenderer = new RtpRimRenderer();
+        this.skinRenderer = new PortalSkinRenderer(claimArbiter);
+        BooleanSupplier alive = () -> !closed;
+        this.closeQueue = new ProjectionInterestCloseQueue(alive);
+        this.platePipeline = new PlatePipeline<BlockData, World>(FidelitySettings.plateMaxBytes, scheduler,
+            (message, failure) -> Wormholes.instance.getLogger().log(Level.WARNING, "[plate] " + message, failure));
+        this.plateCache = platePipeline.cache();
+        this.interestSet = new ProjectionInterestSet(claimArbiter, localEntityOcclusion, viewProvider, closeQueue, alive,
+            plateCache, scheduler);
+        this.budgetLedger = new ProjectionBudgetLedger();
+        this.clientView = new BukkitClientView(new BukkitClientView.Options(viewProvider, plateCache, ProjectionManager::localPortal,
+            (observerId, portalId) -> interestSet.retire(portalId, observerId), scheduler.compute(),
+            Bukkit.getUnsafe().getDataVersion(), clientViewOptions(), observer -> PacketEvents.getAPI().getPlayerManager().getUser(observer),
+            (observer, task, delayTicks) -> FoliaScheduler.runEntity(Wormholes.instance, observer, task, delayTicks),
+            Wormholes.instance.getLogger(), Wormholes::v, FoliaScheduler.isFoliaThreading(Bukkit.getServer())));
+        this.observerFrame = new ProjectionInterestFrame(interestSet, budgetLedger, claimArbiter,
+            localEntityOcclusion, skinRenderer, rtpRimRenderer,
+            () -> rtpProjectionProvider, alive, clientView);
+        this.projectedEntityUpdates = new ProjectedEntityUpdateBatcher();
+        this.observerTasksInFlight = ConcurrentHashMap.newKeySet();
+        this.shutdownFinalized = new AtomicBoolean();
+        this.shutdownStarted = new AtomicBoolean();
+        this.tickCount = 0L;
+        this.firstTickLogged = false;
+        this.closed = false;
+        this.projectionFrozenUntilMillis = 0L;
+        this.taskId = -1;
+        scheduleTick();
+    }
+
+    public void setRtpProjectionProvider(RtpProjectionProvider provider) {
+        rtpProjectionProvider = provider;
+    }
+
+    public ViewPlateCache<BlockData, World> plateCache() {
+        return plateCache;
+    }
+
+    public List<Player> observersOf(UUID portalId) {
+        if (portalId == null || closed) {
+            return List.of();
+        }
+        List<Player> observers = interestSet.observersOf(portalId);
+        if (!clientView.attending()) {
+            return observers;
+        }
+        List<Player> merged = new ArrayList<Player>(observers);
+        clientView.observersOf(portalId, merged);
+        return merged;
+    }
+
+    public BukkitClientView clientView() {
+        return clientView;
+    }
+
+    public void registerClientView(Plugin plugin) {
+        clientView.start(plugin);
+    }
+
+    @EventHandler
+    public void on(PlayerQuitEvent e) {
+        endReturnPreview.forget(e.getPlayer().getUniqueId());
+        observerTasksInFlight.remove(e.getPlayer().getUniqueId());
+        ClientProfileService.forgetPlayer(e.getPlayer().getUniqueId());
+        skinRenderer.discardObserver(e.getPlayer().getUniqueId());
+        AcousticsBridge<Player> acoustics = FidelitySubsystem.acoustics();
+        if (acoustics != null) {
+            acoustics.forgetObserver(e.getPlayer().getUniqueId());
+        }
+        discardObserverProjectors(e.getPlayer());
+    }
+
+    @EventHandler
+    public void on(PlayerJoinEvent e) {
+        skinRenderer.discardObserver(e.getPlayer().getUniqueId());
+        discardObserverProjectors(e.getPlayer());
+    }
+
+    @EventHandler
+    public void on(PlayerChangedWorldEvent e) {
+        skinRenderer.discardObserver(e.getPlayer().getUniqueId());
+        discardObserverProjectors(e.getPlayer());
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void on(PlayerAnimationEvent e) {
+        EntityAnimationType type = e.getAnimationType() == PlayerAnimationType.OFF_ARM_SWING
+                ? EntityAnimationType.SWING_OFF_HAND
+                : EntityAnimationType.SWING_MAIN_ARM;
+        broadcastProjectedEntityAnimation(e.getPlayer().getUniqueId(), type);
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void on(EntityShootBowEvent e) {
+        EntityAnimationType type = e.getHand() == EquipmentSlot.OFF_HAND
+                ? EntityAnimationType.SWING_OFF_HAND
+                : EntityAnimationType.SWING_MAIN_ARM;
+        broadcastProjectedEntityAnimation(e.getEntity().getUniqueId(), type);
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void on(EntityDamageEvent e) {
+        Entity entity = e.getEntity();
+        broadcastProjectedEntityHurt(entity.getUniqueId(), entity.getLocation().getYaw());
+        if (!(e instanceof EntityDamageByEntityEvent)) {
+            return;
+        }
+        EntityDamageByEntityEvent damageByEntityEvent = (EntityDamageByEntityEvent) e;
+        Entity source = resolveAttackSource(damageByEntityEvent.getDamager());
+        if (source != null && !(source instanceof Player)) {
+            broadcastProjectedEntityAnimation(source.getUniqueId(), EntityAnimationType.SWING_MAIN_ARM);
+        }
+    }
+
+    private void tick() {
+        if (closed) {
+            return;
+        }
+        if (projectionsFrozen(projectionFrozenUntilMillis, System.currentTimeMillis())) {
+            return;
+        }
+        tickCount++;
+        scheduler.advanceTick();
+        viewProvider.tick();
+        closeQueue.retryPending();
+        if (tickCount % PLATE_INVALIDATION_INTERVAL_TICKS == 0L) {
+            plateCache.refreshDirt(Wormholes.projectionChangeTracker);
+        }
+        platePipeline.tickCaptures(FidelitySettings.plateCaptureChunksPerTick, FidelitySettings.plateUrgentCaptureChunksPerTick);
+        if (tickCount % ACOUSTICS_AMBIENT_INTERVAL_TICKS == 0L) {
+            AcousticsBridge<Player> acoustics = FidelitySubsystem.acoustics();
+            if (acoustics != null) {
+                acoustics.tickAmbient(System.currentTimeMillis());
+            }
+        }
+
+        if (!firstTickLogged) {
+            firstTickLogged = true;
+            Wormholes.v("[ProjectionManager] first tick fired");
+        }
+
+        if (Wormholes.portalManager == null) {
+            if (tickCount % 50L == 1L) {
+                Wormholes.w("[ProjectionManager] portalManager is null on tick " + tickCount);
+            }
+            return;
+        }
+
+        List<Player> onlinePlayers = new ArrayList<Player>(Wormholes.instance.getServer().getOnlinePlayers());
+        List<ILocalPortal> skinnedPortals = collectSkinnedPortals();
+        boolean skinWork = !skinnedPortals.isEmpty() || skinRenderer.isActive();
+        PortalCandidateSnapshot skinSnapshot = skinRenderer.capture(skinnedPortals);
+        ProjectionBudgetLedger.FrameBudget frameBudget = budgetLedger.beginFrame(tickHeadroom.frameMicros(
+            Settings.PROJECTION_TICK_HEADROOM_TARGET_MILLIS, Settings.PROJECTION_TICK_HEADROOM_MIN_FRAME_MICROS,
+            Settings.PROJECTION_MAX_FRAME_MICROS));
+        List<ILocalPortal> active = collectActiveProjectors();
+        PortalCandidateSnapshot activeSnapshot = PortalCandidateSnapshot.captureProjection(active);
+        interestSet.retainPortals(active);
+        long frameTick = tickCount;
+        if (!skinWork && active.isEmpty() && interestSet.isEmpty() && closeQueue.isEmpty() && claimArbiter.isIdle()
+            && !clientView.attending()) {
+            interestSet.pruneGrace(frameTick);
+            WormholesTelemetry.setProjectionGauges(0, 0, countSpoofedEntities());
+            emitDiagnostics(active);
+            return;
+        }
+        boolean updateBlocks = shouldUpdateBlocks();
+        boolean updateEntities = shouldUpdateEntities();
+        Set<UUID> priorityObservers = interestSet.observerIds();
+        clientView.projectingObservers(priorityObservers);
+        int projectionObservers = priorityObservers.size();
+        priorityObservers.addAll(skinRenderer.observerIds());
+        clientView.attendingObservers(priorityObservers);
+        boolean discoveryEnabled = !active.isEmpty() || !skinnedPortals.isEmpty();
+        List<Player> observerCandidates = budgetLedger.selectObserverCandidates(onlinePlayers, priorityObservers,
+            observerTasksInFlight, frameTick, Settings.PROJECTION_MAX_NEW_OBSERVER_SCANS_PER_TICK, discoveryEnabled);
+        int totalBudget = updateBlocks || interestSet.hasPendingScans()
+            ? Math.max(0, Settings.PROJECTION_MAX_PROJECTORS_PER_TICK) : 0;
+        int perObserverBudget = Math.max(0, Settings.PROJECTION_MAX_PORTALS_PER_OBSERVER_TICK);
+        int[] reservedBudgets = fairBudgetAllocations(observerCandidates.size(), totalBudget, perObserverBudget, frameTick);
+        int reservedTotal = 0;
+        for (int reserved : reservedBudgets) {
+            reservedTotal += reserved;
+        }
+        AtomicInteger remainingProjectors = new AtomicInteger(Math.max(0, totalBudget - reservedTotal));
+        int rotationStart = observerCandidates.isEmpty() ? 0 : (int) Math.floorMod(frameTick, observerCandidates.size());
+        for (int offset = 0; offset < observerCandidates.size(); offset++) {
+            int index = (rotationStart + offset) % observerCandidates.size();
+            Player observer = observerCandidates.get(index);
+            UUID observerId = observer.getUniqueId();
+            int reservedBudget = reservedBudgets[index];
+            dispatchObserverFrame(observerTasksInFlight, observer, observerId, remainingProjectors, reservedBudget, () -> {
+                try {
+                    if (closed) {
+                        remainingProjectors.addAndGet(reservedBudget);
+                        return;
+                    }
+                    observerFrame.project(observer, activeSnapshot, remainingProjectors, reservedBudget,
+                        updateBlocks, updateEntities, frameTick, skinWork, skinSnapshot, frameBudget);
+                } finally {
+                    observerTasksInFlight.remove(observerId);
+                }
+            }, ENTITY_FRAME_SCHEDULER);
+        }
+        interestSet.pruneGrace(frameTick);
+        WormholesTelemetry.setProjectionGauges(active.size(), projectionObservers, countSpoofedEntities());
+        emitDiagnostics(active);
+    }
+
+    private void emitDiagnostics(List<ILocalPortal> active) {
+        if (!budgetLedger.emitDiagnostics(tickCount, active, interestSet, tickHeadroom.governedFrameMicros()) || !Settings.DEBUG) {
+            return;
+        }
+        Wormholes.v("[ProjectionManager] caches sectionBytes=" + viewProvider.cachedBytes()
+            + " sections=" + viewProvider.cachedSections() + " plates=" + plateCache.size()
+            + " plateBytes=" + plateCache.bytes() + " plateBuilds=" + plateCache.buildsCompleted()
+            + " plateCapturesQueued=" + platePipeline.queuedCaptures());
+    }
+
+    static boolean dispatchObserverFrame(Set<UUID> inFlight,
+                                         Player observer,
+                                         UUID observerId,
+                                         AtomicInteger remainingProjectors,
+                                         int reservedBudget,
+                                         Runnable frame,
+                                         ObserverFrameScheduler scheduler) {
+        if (!inFlight.add(observerId)) {
+            remainingProjectors.addAndGet(reservedBudget);
+            return false;
+        }
+        boolean scheduled = scheduler.schedule(observer, frame,
+            () -> releaseObserverFrame(inFlight, observerId, remainingProjectors, reservedBudget));
+        if (!scheduled) {
+            releaseObserverFrame(inFlight, observerId, remainingProjectors, reservedBudget);
+        }
+        return scheduled;
+    }
+
+    static boolean releaseObserverFrame(Set<UUID> inFlight,
+                                        UUID observerId,
+                                        AtomicInteger remainingProjectors,
+                                        int reservedBudget) {
+        if (!inFlight.remove(observerId)) {
+            return false;
+        }
+        remainingProjectors.addAndGet(reservedBudget);
+        Wormholes.v("[ProjectionManager] observer frame dropped observer=" + observerId
+            + " total=" + DROPPED_OBSERVER_FRAMES.incrementAndGet());
+        WormholesTelemetry.countFailure(OBSERVER_FRAME_DROPPED);
+        return true;
+    }
+
+    static boolean dispatchProjectedEntityUpdate(Player observer,
+                                                 UUID entityId,
+                                                 String kind,
+                                                 Runnable update,
+                                                 Runnable retired,
+                                                 EntityUpdateScheduler scheduler) {
+        if (scheduler.schedule(observer, update, retired)) {
+            return true;
+        }
+        Wormholes.v("[ProjectionManager] dropped projected " + kind
+            + " observer=" + (observer == null ? null : observer.getUniqueId())
+            + " entity=" + entityId + " total=" + DROPPED_ENTITY_UPDATES.incrementAndGet());
+        WormholesTelemetry.countFailure(ENTITY_UPDATE_DROPPED);
+        return false;
+    }
+
+    private int countSpoofedEntities() {
+        return interestSet.countSpoofedEntities() + closeQueue.countSpoofedEntities();
+    }
+
+    private List<ILocalPortal> collectActiveProjectors() {
+        List<ILocalPortal> active = new ArrayList<ILocalPortal>();
+        RtpProjectionProvider provider = rtpProjectionProvider;
+
+        for (ILocalPortal portal : Wormholes.portalManager.getLocalPortals()) {
+            if (provider != null && provider.supports(portal)) {
+                active.add(portal);
+                continue;
+            }
+            if (!portal.supportsProjections() || !portal.isProjecting() || portal.blocksProjection()) {
+                continue;
+            }
+            if (!portal.isOpen()) {
+                continue;
+            }
+            if (portal.getDimensionalPortalKind() != DimensionalPortalKind.END_EXIT && !portal.isMirrorMode() && !portal.hasTunnel()) {
+                continue;
+            }
+            active.add(portal);
+        }
+
+        for (ProjectionSource source : WormholesHooks.projectionSources()) {
+            for (ILocalPortal portal : source.activeProjectionPortals()) {
+                if (portal == null || portal.isDestroyed() || !portal.isProjecting() || !portal.isOpen()) {
+                    continue;
+                }
+                active.add(portal);
+            }
+        }
+
+        return active;
+    }
+
+    private List<ILocalPortal> collectSkinnedPortals() {
+        List<ILocalPortal> skinned = new ArrayList<ILocalPortal>();
+        for (ILocalPortal portal : Wormholes.portalManager.getLocalPortals()) {
+            if (portal.hasSurfaceSkin() && !portal.isDestroyed() && portal.getWorld() != null) {
+                skinned.add(portal);
+            }
+        }
+        return skinned;
+    }
+
+    static int[] fairBudgetAllocations(int observerCount, int totalBudget, int perObserverBudget, long frameTick) {
+        if (observerCount <= 0 || totalBudget <= 0 || perObserverBudget <= 0) {
+            return new int[Math.max(0, observerCount)];
+        }
+        int[] allocations = new int[observerCount];
+        long maximum = (long) observerCount * perObserverBudget;
+        int remaining = (int) Math.min(totalBudget, Math.min(Integer.MAX_VALUE, maximum));
+        long stride = Math.min(observerCount, totalBudget);
+        long normalizedTick = Math.floorMod(frameTick, observerCount);
+        int start = (int) ((normalizedTick * stride) % observerCount);
+        while (remaining > 0) {
+            boolean allocated = false;
+            for (int offset = 0; offset < observerCount && remaining > 0; offset++) {
+                int index = (start + offset) % observerCount;
+                if (allocations[index] >= perObserverBudget) {
+                    continue;
+                }
+                allocations[index]++;
+                remaining--;
+                allocated = true;
+            }
+            if (!allocated) {
+                break;
+            }
+        }
+        return allocations;
+    }
+
+    public ProjectionResolution resolveProjection(ILocalPortal portal, Player observer, long frameTick) {
+        return resolveProjection(rtpProjectionProvider, portal, observer, rtpRimRenderer, frameTick, clientView);
+    }
+
+    public PortalProjector.RtpProjectionTarget endReturnTarget(Player observer, long frameTick) {
+        return endReturnPreview.target(observer, frameTick);
+    }
+
+    static ProjectionResolution resolveProjection(RtpProjectionProvider provider, ILocalPortal portal,
+                                                  Player observer, RtpRimRenderer rimRenderer, long frameTick, ClientViewRouting clientView) {
+        Objects.requireNonNull(portal, "portal");
+        Objects.requireNonNull(observer, "observer");
+        boolean rtp = provider != null && provider.supports(portal);
+        RtpProjectionResult result = null;
+        if (rtp) {
+            RtpRimRenderer requiredRimRenderer = Objects.requireNonNull(rimRenderer, "rimRenderer");
+            result = Objects.requireNonNull(provider.touch(portal, observer), "RTP projection result");
+            RtpRimRenderer.Input input = new RtpRimRenderer.Input(
+                    observer.getUniqueId(),
+                    result.view(),
+                    result.rimEnabled(),
+                    result.attended(),
+                    result.rotationMode(),
+                    result.phase(),
+                    result.elapsedMillis(),
+                    result.durationMillis());
+            if (clientView.receiver(observer)) {
+                clientView.rim(observer, portal.getId(), requiredRimRenderer.calculate(input).orElse(null));
+            } else {
+                Optional<RtpRimRenderer.Sample> sample = requiredRimRenderer.nextDispatch(portal.getId(), input, frameTick,
+                        Settings.RTP_RIM_INTERVAL_TICKS);
+                if (sample.isPresent()) {
+                    provider.dispatchRim(portal, observer, sample.get());
+                }
+            }
+        }
+        if (!portal.supportsProjections() || !portal.isProjecting() || !portal.isOpen() || portal.blocksProjection()) {
+            return ProjectionResolution.suppressed(rtp);
+        }
+        if (portal.getDimensionalPortalKind() == DimensionalPortalKind.END_EXIT) {
+            ProjectionManager manager = Wormholes.projectionManager;
+            PortalProjector.RtpProjectionTarget target = manager == null ? null : manager.endReturnTarget(observer, frameTick);
+            return target == null ? ProjectionResolution.suppressed(false) : new ProjectionResolution(true, false, target);
+        }
+        if (!rtp) {
+            if (!portal.isMirrorMode() && !portal.hasTunnel()) {
+                return ProjectionResolution.suppressed(false);
+            }
+            return ProjectionResolution.standard();
+        }
+        if (!result.projectionEnabled()) {
+            return ProjectionResolution.suppressed(true);
+        }
+        Optional<RtpProjectionView.ReadyData> readyData = result.view().readyFor(observer.getUniqueId());
+        if (readyData.isEmpty()) {
+            return ProjectionResolution.suppressed(true);
+        }
+        RtpProjectionView.ReadyData ready = readyData.get();
+        World targetWorld = provider.resolveTargetWorld(ready.target().worldKey());
+        if (targetWorld == null) {
+            return ProjectionResolution.suppressed(true);
+        }
+        return ProjectionResolution.rtp(PortalProjector.RtpProjectionTarget.from(ready, targetWorld));
+    }
+
+    static String formatLoc(Location loc) {
+        if (loc == null) {
+            return "null";
+        }
+        return loc.getBlockX() + "," + loc.getBlockY() + "," + loc.getBlockZ();
+    }
+
+    static boolean isLookingTowardPortal(Location eye, Location center, double minimumDot) {
+        if (eye == null || center == null) {
+            return false;
+        }
+        if (eye.getWorld() != null && center.getWorld() != null && !eye.getWorld().equals(center.getWorld())) {
+            return false;
+        }
+        Vector direction = eye.getDirection();
+        return ObserverGeometry.isLookingTowardPortal(eye.getX(), eye.getY(), eye.getZ(),
+            center.getX(), center.getY(), center.getZ(), direction.getX(), direction.getY(), direction.getZ(), minimumDot);
+    }
+
+    static boolean isObserverProjectionInterested(Location eye, Location center, ILocalPortal portal, boolean foveatedUnrendering) {
+        if (!foveatedUnrendering) {
+            return true;
+        }
+        return hasStablePortalSide(eye, portal, Settings.PROJECTION_SIDE_GRACE_DOT)
+                && isLookingTowardPortal(eye, center, Settings.PROJECTION_OBSERVER_INTEREST_DOT);
+    }
+
+    static boolean isObserverProjectionInterested(Location eye, Location center, ILocalPortal portal) {
+        return isObserverProjectionInterested(eye, center, portal, Settings.PROJECTION_FOVEATED_UNRENDERING);
+    }
+
+    static boolean hasStablePortalSide(Location eye, ILocalPortal portal, double minimumAbsoluteDot) {
+        if (eye == null || portal == null || portal.getOrigin() == null || portal.getFrame() == null) {
+            return false;
+        }
+        if (minimumAbsoluteDot <= 0.0D) {
+            return true;
+        }
+        Face normal = portal.getFrame().getNormal();
+        return ObserverGeometry.hasStablePortalSide(eye.getX(), eye.getY(), eye.getZ(),
+                portal.getOrigin().x(), portal.getOrigin().y(), portal.getOrigin().z(),
+                normal.x(), normal.y(), normal.z(), minimumAbsoluteDot);
+    }
+
+
+    public void removeProjector(ILocalPortal portal) {
+        interestSet.retirePortal(portal.getId());
+        if (portal.getId() != null) {
+            plateCache.invalidatePortal(portal.getId());
+            rtpRimRenderer.forgetPortal(portal.getId());
+            AcousticsBridge<Player> acoustics = FidelitySubsystem.acoustics();
+            if (acoustics != null) {
+                acoustics.forgetPortal(portal.getId());
+            }
+        }
+    }
+
+    public void removeProjector(Player player) {
+        UUID id = player.getUniqueId();
+        budgetLedger.forgetObserver(id);
+        interestSet.closeObserver(id);
+        interestSet.forgetObserver(id);
+        projectedEntityUpdates.discard(id);
+        rtpRimRenderer.forgetViewer(id);
+    }
+
+    private void discardObserverProjectors(Player player) {
+        UUID id = player.getUniqueId();
+        budgetLedger.forgetObserver(id);
+        rtpRimRenderer.forgetViewer(id);
+        interestSet.discardObserver(id);
+        localEntityOcclusion.discardObserver(id);
+        claimArbiter.discardObserver(id);
+        clientChunkTracker.forget(id);
+        interestSet.forgetObserver(id);
+        projectedEntityUpdates.discard(id);
+    }
+
+    public void reprimeArrival(Player player) {
+        if (player == null) {
+            return;
+        }
+        FoliaScheduler.runEntity(Wormholes.instance, player, () -> removeProjector(player), 20L);
+    }
+
+    static boolean projectionsFrozen(long frozenUntilMillis, long nowMillis) {
+        return frozenUntilMillis > nowMillis;
+    }
+
+    public long freezeProjections(long durationMillis) {
+        if (durationMillis <= 0L) {
+            projectionFrozenUntilMillis = 0L;
+            return 0L;
+        }
+        long deadline = System.currentTimeMillis() + durationMillis;
+        projectionFrozenUntilMillis = deadline;
+        return deadline;
+    }
+
+    public int flushProjections() {
+        Set<UUID> observersWithProjectors = interestSet.observerIds();
+        int flushed = 0;
+        for (Player player : new ArrayList<Player>(Wormholes.instance.getServer().getOnlinePlayers())) {
+            UUID observerId = player.getUniqueId();
+            boolean hadProjectors = observersWithProjectors.contains(observerId);
+            removeProjector(player);
+            clientChunkTracker.forget(observerId);
+            if (hadProjectors) {
+                flushed++;
+            }
+        }
+        return flushed;
+    }
+
+    public boolean isLocalEntityOccluded(UUID observerId, UUID entityId) {
+        return localEntityOcclusion.isClaimed(observerId, entityId);
+    }
+
+    public void removeProjector(ILocalPortal portal, Player player) {
+        interestSet.retire(portal.getId(), player.getUniqueId());
+    }
+
+    public void shutdown() {
+        if (!shutdownStarted.compareAndSet(false, true)) {
+            return;
+        }
+        closed = true;
+        endReturnPreview.close();
+        clientView.stop();
+        projectedEntityUpdates.close();
+        platePipeline.clear();
+        if (taskId >= 0) {
+            J.csr(taskId);
+            taskId = -1;
+        }
+        awaitObserverFrames();
+        skinRenderer.shutdown();
+        Set<PortalProjector> closingSet = new HashSet<PortalProjector>(interestSet.snapshot());
+        closingSet.addAll(closeQueue.pending());
+        List<PortalProjector> closing = new ArrayList<PortalProjector>(closingSet);
+        AtomicInteger pending = new AtomicInteger(closing.size());
+        CountDownLatch completion = new CountDownLatch(closing.size());
+        if (closing.isEmpty()) {
+            finalizeShutdown();
+        } else {
+            for (PortalProjector projector : closing) {
+                closeQueue.close(projector, () -> {
+                    completion.countDown();
+                    if (pending.decrementAndGet() == 0) {
+                        finalizeShutdown();
+                    }
+                });
+            }
+        }
+        interestSet.clear();
+        budgetLedger.clearObserverCosts();
+        try {
+            completion.await(2L, TimeUnit.SECONDS);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        } finally {
+            closeQueue.forceDiscardAll();
+            finalizeShutdown();
+        }
+    }
+
+    private void awaitObserverFrames() {
+        long deadlineNanos = System.nanoTime() + (OBSERVER_FRAME_SHUTDOWN_WAIT_MILLIS * 1_000_000L);
+        while (!observerTasksInFlight.isEmpty() && System.nanoTime() < deadlineNanos) {
+            try {
+                Thread.sleep(1L);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    public void registerTickHeadroom(Plugin plugin) {
+        if (FoliaScheduler.isFoliaThreading(Bukkit.getServer()) || !tickEndEventAvailable()) {
+            return;
+        }
+        try {
+            Class<?> listenerType = Class.forName(TICK_HEADROOM_LISTENER_CLASS);
+            Constructor<?> constructor = listenerType.getDeclaredConstructor(ProjectionTickHeadroom.class);
+            constructor.setAccessible(true);
+            Bukkit.getPluginManager().registerEvents((Listener) constructor.newInstance(tickHeadroom), plugin);
+        } catch (ReflectiveOperationException | LinkageError | ClassCastException error) {
+            plugin.getLogger().log(Level.WARNING, "Could not register the Paper tick headroom listener", error);
+        }
+    }
+
+    private static ViewStreamOptions clientViewOptions() {
+        WormholesSettings settings = Wormholes.settings;
+        return settings == null
+            ? new ClientViewConfig().options(ViewStreamOptions.DEFAULT_INTEREST_GRACE_TICKS)
+            : settings.getClientView().options(Settings.PROJECTION_INTEREST_GRACE_TICKS);
+    }
+
+    private static ILocalPortal localPortal(UUID portalId) {
+        PortalManager portals = Wormholes.portalManager;
+        return portals == null ? null : portals.getLocalPortal(portalId);
+    }
+
+    private static boolean tickEndEventAvailable() {
+        try {
+            Class.forName(TICK_END_EVENT_CLASS, false, ProjectionManager.class.getClassLoader());
+            return true;
+        } catch (ClassNotFoundException ignored) {
+            return false;
+        }
+    }
+
+    public void onSettingsReloaded() {
+        clientView.configure(clientViewOptions());
+        viewProvider.reconfigure();
+        interestSet.invalidateProjectionReuse();
+        scheduleTick();
+    }
+
+    /** Runs after the lane snapshot refreshed, which is later in the reload than {@link #onSettingsReloaded()}. */
+    public void onFidelitySettingsReloaded() {
+        plateCache.recap(FidelitySettings.plateMaxBytes);
+        scheduler.compute().resize(FidelitySettings.plateWorkers);
+        if (!FidelitySettings.sharedPlate) {
+            platePipeline.clear();
+        }
+        interestSet.invalidateProjectionReuse();
+    }
+
+    private boolean shouldUpdateBlocks() {
+        int interval = Math.max(1, Settings.PROJECTION_REFRESH_INTERVAL_TICKS);
+        return (tickCount - 1L) % interval == 0L;
+    }
+
+    private boolean shouldUpdateEntities() {
+        int interval = Math.max(1, Settings.ENTITY_UPDATE_INTERVAL_TICKS);
+        return (tickCount - 1L) % interval == 0L;
+    }
+
+    private void broadcastProjectedEntityAnimation(UUID entityId, EntityAnimationType type) {
+        if (entityId == null || type == null) {
+            return;
+        }
+        ViewServer viewServer = Wormholes.viewServer;
+        if (viewServer != null) {
+            viewServer.forwardAnimation(entityId, type);
+        }
+        dispatchProjectedEntityAnimation(entityId, type);
+    }
+
+    public void dispatchProjectedEntityAnimation(UUID entityId, EntityAnimationType type) {
+        if (closed || entityId == null || type == null) {
+            return;
+        }
+        int animation = switch (type) {
+            case SWING_MAIN_ARM -> 0;
+            case WAKE_UP -> 2;
+            case SWING_OFF_HAND -> 3;
+            case CRITICAL_HIT -> 4;
+            case MAGIC_CRITICAL_HIT -> 5;
+            default -> -1;
+        };
+        if (animation >= 0) {
+            clientView.entityEvent(EntityAnimation.animation(entityId, animation));
+        }
+        for (Player observer : interestSet.projectedEntityObservers(entityId)) {
+            UUID observerId = observer.getUniqueId();
+            ProjectedEntityUpdateBatcher.ScheduleLease lease =
+                projectedEntityUpdates.offerAnimation(observerId, entityId, type);
+            if (lease == null) {
+                continue;
+            }
+            boolean scheduled = dispatchProjectedEntityUpdate(observer, entityId, "animation",
+                () -> drainProjectedEntityUpdates(observer, lease),
+                () -> projectedEntityUpdates.discard(lease), ENTITY_UPDATE_SCHEDULER);
+            if (!scheduled) {
+                projectedEntityUpdates.reject(lease);
+            }
+        }
+    }
+
+    private void broadcastProjectedEntityHurt(UUID entityId, float yaw) {
+        if (entityId == null) {
+            return;
+        }
+        ViewServer viewServer = Wormholes.viewServer;
+        if (viewServer != null) {
+            viewServer.forwardHurt(entityId, yaw);
+        }
+        dispatchProjectedEntityHurt(entityId, yaw);
+    }
+
+    public void dispatchProjectedEntityHurt(UUID entityId, float yaw) {
+        if (closed || entityId == null) {
+            return;
+        }
+        clientView.entityEvent(EntityAnimation.hurt(entityId, yaw));
+        for (Player observer : interestSet.projectedEntityObservers(entityId)) {
+            UUID observerId = observer.getUniqueId();
+            ProjectedEntityUpdateBatcher.ScheduleLease lease =
+                projectedEntityUpdates.offerHurt(observerId, entityId, yaw);
+            if (lease == null) {
+                continue;
+            }
+            boolean scheduled = dispatchProjectedEntityUpdate(observer, entityId, "hurt",
+                () -> drainProjectedEntityUpdates(observer, lease),
+                () -> projectedEntityUpdates.discard(lease), ENTITY_UPDATE_SCHEDULER);
+            if (!scheduled) {
+                projectedEntityUpdates.reject(lease);
+            }
+        }
+    }
+
+    private void drainProjectedEntityUpdates(Player observer, ProjectedEntityUpdateBatcher.ScheduleLease lease) {
+        UUID observerId = observer.getUniqueId();
+        ProjectedEntityUpdateBatcher.Batch batch = projectedEntityUpdates.drain(lease);
+        try {
+            if (!closed && observer.isOnline()) {
+                for (Map.Entry<UUID, List<ProjectedEntityUpdateBatcher.Action>> entry : batch.updates().entrySet()) {
+                    deliverProjectedEntityUpdates(observerId, entry.getKey(), entry.getValue());
+                }
+            }
+        } finally {
+            ProjectedEntityUpdateBatcher.Completion completion = projectedEntityUpdates.complete(lease);
+            if (completion.reschedule() && (closed || !observer.isOnline())) {
+                projectedEntityUpdates.discard(lease);
+            } else if (completion.reschedule()) {
+                boolean scheduled = dispatchProjectedEntityUpdate(observer, completion.representativeEntityId(), "batch",
+                    () -> drainProjectedEntityUpdates(observer, lease),
+                    () -> projectedEntityUpdates.discard(lease), ENTITY_UPDATE_SCHEDULER);
+                if (!scheduled) {
+                    projectedEntityUpdates.reject(lease);
+                }
+            }
+        }
+    }
+
+    private void deliverProjectedEntityUpdates(UUID observerId,
+                                               UUID entityId,
+                                               List<ProjectedEntityUpdateBatcher.Action> actions) {
+        for (PortalProjector projector : interestSet.projectedEntityProjectors(entityId, observerId)) {
+            if (projector.isClosed() || !projector.hasProjectedEntity(entityId)) {
+                continue;
+            }
+            try {
+                for (ProjectedEntityUpdateBatcher.Action action : actions) {
+                    switch (action.kind()) {
+                        case ANIMATION -> projector.sendProjectedEntityAnimation(entityId, action.animationType());
+                        case HURT -> projector.sendProjectedEntityHurt(entityId, action.yaw());
+                    }
+                }
+            } catch (RuntimeException error) {
+                Wormholes.instance.getLogger().log(Level.WARNING,
+                    "[ProjectionManager] projected entity update failed portal=" + projector.getPortal().getName()
+                        + " observer=" + observerId + " entity=" + entityId, error);
+            }
+        }
+    }
+
+    private Entity resolveAttackSource(Entity damager) {
+        if (damager instanceof Projectile) {
+            Projectile projectile = (Projectile) damager;
+            ProjectileSource shooter = projectile.getShooter();
+            if (shooter instanceof Entity) {
+                return (Entity) shooter;
+            }
+        }
+        return damager;
+    }
+
+    private void scheduleTick() {
+        if (closed || taskId >= 0) {
+            return;
+        }
+        taskId = J.sr(() -> tick(), TICK_INTERVAL_TICKS);
+        Wormholes.v("[ProjectionManager] tick scheduled (taskId=" + taskId + ", interval=" + TICK_INTERVAL_TICKS + "t, blockInterval=" + Settings.PROJECTION_REFRESH_INTERVAL_TICKS + "t, entityInterval=" + Settings.ENTITY_UPDATE_INTERVAL_TICKS + "t, range=" + Settings.PROJECTION_RANGE + ")");
+    }
+
+    private void finalizeShutdown() {
+        if (!shutdownFinalized.compareAndSet(false, true)) {
+            return;
+        }
+        claimArbiter.clear();
+        localEntityOcclusion.clear();
+        viewProvider.close();
+    }
+
+    @FunctionalInterface
+    interface ObserverFrameScheduler {
+        boolean schedule(Player observer, Runnable frame, Runnable retired);
+    }
+
+    @FunctionalInterface
+    interface EntityUpdateScheduler {
+        boolean schedule(Player observer, Runnable update, Runnable retired);
+    }
+
+    public interface RtpProjectionProvider {
+        boolean supports(ILocalPortal portal);
+
+        RtpProjectionResult touch(ILocalPortal portal, Player observer);
+
+        World resolveTargetWorld(String worldKey);
+
+        void dispatchRim(ILocalPortal portal, Player observer, RtpRimRenderer.Sample sample);
+    }
+
+    public record RtpProjectionResult(
+            RtpProjectionView view,
+            boolean projectionEnabled,
+            boolean rimEnabled,
+            boolean attended,
+            RtpRotationMode rotationMode,
+            RtpRimRenderer.Phase phase,
+            long elapsedMillis,
+            long durationMillis) {
+        public RtpProjectionResult {
+            Objects.requireNonNull(view, "view");
+            Objects.requireNonNull(rotationMode, "rotationMode");
+            Objects.requireNonNull(phase, "phase");
+            if (elapsedMillis < 0L) {
+                throw new IllegalArgumentException("elapsedMillis must be non-negative");
+            }
+            if (durationMillis < 0L) {
+                throw new IllegalArgumentException("durationMillis must be non-negative");
+            }
+        }
+    }
+
+    public record ProjectionResolution(boolean projectable, boolean rtp, PortalProjector.RtpProjectionTarget target) {
+        private static ProjectionResolution standard() {
+            return new ProjectionResolution(true, false, null);
+        }
+
+        private static ProjectionResolution rtp(PortalProjector.RtpProjectionTarget target) {
+            return new ProjectionResolution(true, true, Objects.requireNonNull(target, "target"));
+        }
+
+        private static ProjectionResolution suppressed(boolean rtp) {
+            return new ProjectionResolution(false, rtp, null);
+        }
+    }
+}

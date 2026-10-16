@@ -1,0 +1,535 @@
+package art.arcane.volmlib.util.io;
+
+import art.arcane.volmlib.util.collection.KList;
+import org.junit.Test;
+
+import java.io.File;
+import java.lang.reflect.Field;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+public class ReactiveFolderTest {
+    @Test
+    public void initialReconciliationDoesNotHotloadExistingFiles() throws Exception {
+        Path directory = Files.createTempDirectory("reactive-folder-initial-test");
+        Files.writeString(directory.resolve("dimension.json"), "{\"v\":1}", StandardCharsets.UTF_8);
+        AtomicInteger hotloads = new AtomicInteger();
+        ReactiveFolder folder = null;
+        try {
+            folder = new ReactiveFolder(
+                    directory.toFile(),
+                    (created, changed, deleted) -> hotloads.incrementAndGet(),
+                    new KList<>(".json"),
+                    new KList<>(),
+                    new KList<>()
+            );
+
+            for (int index = 0; index < 6; index++) {
+                assertFalse(folder.check());
+            }
+            assertEquals(0, hotloads.get());
+        } finally {
+            if (folder != null) {
+                folder.clear();
+            }
+            Files.walk(directory)
+                    .sorted(Comparator.reverseOrder())
+                    .map(Path::toFile)
+                    .forEach(File::delete);
+        }
+    }
+
+    @Test
+    public void checkReturnsDetectedWatchedChanges() throws Exception {
+        Path directory = Files.createTempDirectory("reactive-folder-test");
+        Path watchedFile = directory.resolve("dimension.json");
+        Files.writeString(watchedFile, "{\"v\":1}", StandardCharsets.UTF_8);
+        AtomicLong clock = new AtomicLong();
+        AtomicInteger hotloads = new AtomicInteger();
+
+        ReactiveFolder folder = null;
+        try {
+            folder = new ReactiveFolder(
+                    directory.toFile(),
+                    (created, changed, deleted) -> hotloads.incrementAndGet(),
+                    new KList<>(".json"),
+                    new KList<>(),
+                    new KList<>(),
+                    clock::get
+            );
+
+            Files.writeString(watchedFile, "{\"v\":22}", StandardCharsets.UTF_8);
+
+            assertFalse(folder.check());
+            clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.STABILITY_WINDOW_MILLIS + 1L));
+            boolean detected = folder.check();
+
+            assertTrue(detected);
+            assertEquals(1, hotloads.get());
+        } finally {
+            if (folder != null) {
+                folder.clear();
+            }
+            Files.walk(directory)
+                    .sorted(Comparator.reverseOrder())
+                    .map(Path::toFile)
+                    .forEach(File::delete);
+        }
+    }
+
+    @Test(timeout = 8_000L)
+    public void consecutiveStableChangesApplyWithoutSuccessCooldown() throws Exception {
+        Path directory = Files.createTempDirectory("reactive-folder-burst-test");
+        Path watchedFile = directory.resolve("dimension.json");
+        Files.writeString(watchedFile, "{\"v\":1}", StandardCharsets.UTF_8);
+        AtomicLong clock = new AtomicLong();
+        AtomicInteger hotloads = new AtomicInteger();
+        AtomicReference<String> applied = new AtomicReference<>();
+
+        ReactiveFolder folder = null;
+        try {
+            folder = new ReactiveFolder(
+                    directory.toFile(),
+                    (created, changed, deleted) -> {
+                        hotloads.incrementAndGet();
+                        try {
+                            applied.set(Files.readString(watchedFile, StandardCharsets.UTF_8));
+                        } catch (Exception failure) {
+                            throw new IllegalStateException(failure);
+                        }
+                    },
+                    new KList<>(".json"),
+                    new KList<>(),
+                    new KList<>(),
+                    clock::get
+            );
+            completeReconciliation(folder);
+            Field watcherField = ReactiveFolder.class.getDeclaredField("fw");
+            watcherField.setAccessible(true);
+            ((FolderWatcher) watcherField.get(folder)).clear();
+
+            Files.writeString(watchedFile, "{\"v\":2}", StandardCharsets.UTF_8);
+            prioritize(folder, watchedFile);
+            assertFalse(folder.check());
+            clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.STABILITY_WINDOW_MILLIS + 1L));
+            assertTrue(folder.check());
+
+            Files.writeString(watchedFile, "{\"v\":3}", StandardCharsets.UTF_8);
+            prioritize(folder, watchedFile);
+            clock.incrementAndGet();
+            assertFalse(folder.check());
+            clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.STABILITY_WINDOW_MILLIS + 1L));
+            assertTrue(folder.check());
+            assertEquals(2, hotloads.get());
+            assertEquals("{\"v\":3}", applied.get());
+            assertFalse(folder.check());
+        } finally {
+            if (folder != null) {
+                folder.clear();
+            }
+            Files.walk(directory)
+                    .sorted(Comparator.reverseOrder())
+                    .map(Path::toFile)
+                    .forEach(File::delete);
+        }
+    }
+
+    @Test
+    public void editorTemporaryFilesDoNotTriggerHotload() throws Exception {
+        Path directory = Files.createTempDirectory("reactive-folder-temp-test");
+        AtomicLong clock = new AtomicLong();
+        AtomicInteger hotloads = new AtomicInteger();
+        ReactiveFolder folder = null;
+        try {
+            folder = new ReactiveFolder(
+                    directory.toFile(),
+                    (created, changed, deleted) -> hotloads.incrementAndGet(),
+                    new KList<>(".json"),
+                    new KList<>(),
+                    new KList<>(),
+                    clock::get
+            );
+
+            Files.writeString(directory.resolve("dimension.tmp.json"), "{}", StandardCharsets.UTF_8);
+            assertFalse(folder.check());
+            clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.STABILITY_WINDOW_MILLIS + 1L));
+            assertFalse(folder.check());
+            assertEquals(0, hotloads.get());
+        } finally {
+            if (folder != null) {
+                folder.clear();
+            }
+            Files.walk(directory)
+                    .sorted(Comparator.reverseOrder())
+                    .map(Path::toFile)
+                    .forEach(File::delete);
+        }
+    }
+
+    @Test
+    public void reconciliationFindsSilentSameMetadataChange() throws Exception {
+        Path directory = Files.createTempDirectory("reactive-folder-reconciliation-test");
+        Path watchedFile = directory.resolve("dimension.json");
+        Files.writeString(watchedFile, "{\"v\":1}", StandardCharsets.UTF_8);
+        FileTime originalTime = Files.getLastModifiedTime(watchedFile);
+        AtomicLong clock = new AtomicLong();
+        AtomicInteger hotloads = new AtomicInteger();
+        ReactiveFolder folder = null;
+        try {
+            folder = new ReactiveFolder(
+                    directory.toFile(),
+                    (created, changed, deleted) -> hotloads.incrementAndGet(),
+                    new KList<>(".json"),
+                    new KList<>(),
+                    new KList<>(),
+                    clock::get
+            );
+
+            folder.check();
+            Field watcherField = ReactiveFolder.class.getDeclaredField("fw");
+            watcherField.setAccessible(true);
+            FolderWatcher watcher = (FolderWatcher) watcherField.get(folder);
+            watcher.clear();
+
+            Files.writeString(watchedFile, "{\"v\":2}", StandardCharsets.UTF_8);
+            Files.setLastModifiedTime(watchedFile, originalTime);
+            clock.set(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.CONTENT_RECONCILIATION_INTERVAL_MILLIS));
+            assertFalse(folder.check());
+            clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.STABILITY_WINDOW_MILLIS + 1L));
+
+            assertTrue(folder.check());
+            assertEquals(1, hotloads.get());
+        } finally {
+            if (folder != null) {
+                folder.clear();
+            }
+            Files.walk(directory)
+                    .sorted(Comparator.reverseOrder())
+                    .map(Path::toFile)
+                    .forEach(File::delete);
+        }
+    }
+
+    @Test(timeout = 8_000L)
+    public void largeBurstWaitsForOneCompleteVerifiedBatch() throws Exception {
+        Path directory = Files.createTempDirectory("reactive-folder-large-burst-test");
+        AtomicLong clock = new AtomicLong();
+        AtomicInteger hotloads = new AtomicInteger();
+        AtomicBoolean completeBatch = new AtomicBoolean();
+        ReactiveFolder folder = null;
+        try {
+            for (int index = 0; index < 300; index++) {
+                Files.writeString(directory.resolve("entry-" + index + ".json"), "0", StandardCharsets.UTF_8);
+            }
+            folder = new ReactiveFolder(
+                    directory.toFile(),
+                    (created, changed, deleted) -> {
+                        hotloads.incrementAndGet();
+                        completeBatch.set(created.size() + changed.size() >= 300);
+                    },
+                    new KList<>(".json"),
+                    new KList<>(),
+                    new KList<>(),
+                    clock::get
+            );
+            for (int index = 0; index < 10; index++) {
+                assertFalse(folder.check());
+            }
+            Field watcherField = ReactiveFolder.class.getDeclaredField("fw");
+            watcherField.setAccessible(true);
+            FolderWatcher watcher = (FolderWatcher) watcherField.get(folder);
+            watcher.clear();
+
+            for (int index = 0; index < 300; index++) {
+                Files.writeString(directory.resolve("entry-" + index + ".json"), "1", StandardCharsets.UTF_8);
+            }
+            clock.set(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.CONTENT_RECONCILIATION_INTERVAL_MILLIS));
+            for (int index = 0; index < 10; index++) {
+                assertFalse(folder.check());
+            }
+            assertEquals(0, hotloads.get());
+            clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.STABILITY_WINDOW_MILLIS + 1L));
+
+            assertTrue(folder.check());
+            assertEquals(1, hotloads.get());
+            assertTrue(completeBatch.get());
+        } finally {
+            if (folder != null) {
+                folder.clear();
+            }
+            Files.walk(directory)
+                    .sorted(Comparator.reverseOrder())
+                    .map(Path::toFile)
+                    .forEach(File::delete);
+        }
+    }
+
+    @Test
+    public void slicedReconciliationDoesNotPublishASeparatedPartialBatch() throws Exception {
+        Path directory = Files.createTempDirectory("reactive-folder-separated-burst-test");
+        AtomicLong clock = new AtomicLong();
+        AtomicInteger hotloads = new AtomicInteger();
+        AtomicInteger batchSize = new AtomicInteger();
+        ReactiveFolder folder = null;
+        try {
+            Path early = directory.resolve("early.json");
+            Files.writeString(early, "0", StandardCharsets.UTF_8);
+            for (int index = 0; index < 96; index++) {
+                Files.writeString(directory.resolve("unchanged-" + index + ".json"), "0", StandardCharsets.UTF_8);
+            }
+            Path nested = Files.createDirectories(directory.resolve("late"));
+            Path late = nested.resolve("late.json");
+            Files.writeString(late, "0", StandardCharsets.UTF_8);
+            folder = new ReactiveFolder(
+                    directory.toFile(),
+                    (created, changed, deleted) -> {
+                        hotloads.incrementAndGet();
+                        batchSize.set(created.size() + changed.size() + deleted.size());
+                    },
+                    new KList<>(".json"),
+                    new KList<>(),
+                    new KList<>(),
+                    clock::get
+            );
+            completeReconciliation(folder);
+            Field watcherField = ReactiveFolder.class.getDeclaredField("fw");
+            watcherField.setAccessible(true);
+            ((FolderWatcher) watcherField.get(folder)).clear();
+
+            Files.writeString(early, "1", StandardCharsets.UTF_8);
+            Files.writeString(late, "1", StandardCharsets.UTF_8);
+            prioritize(folder, early);
+            clock.set(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.CONTENT_RECONCILIATION_INTERVAL_MILLIS));
+            assertFalse(folder.check());
+            assertTrue(reconciliationActive(folder));
+
+            clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.STABILITY_WINDOW_MILLIS + 1L));
+            assertFalse(folder.check());
+            assertEquals(0, hotloads.get());
+            completeReconciliation(folder);
+            clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.STABILITY_WINDOW_MILLIS + 1L));
+
+            assertTrue(folder.check());
+            assertEquals(1, hotloads.get());
+            assertEquals(2, batchSize.get());
+        } finally {
+            if (folder != null) {
+                folder.clear();
+            }
+            Files.walk(directory)
+                    .sorted(Comparator.reverseOrder())
+                    .map(Path::toFile)
+                    .forEach(File::delete);
+        }
+    }
+
+    @Test
+    public void longReconciliationSchedulesTheNextWindowFromCompletion() throws Exception {
+        Path directory = Files.createTempDirectory("reactive-folder-completion-window-test");
+        AtomicLong clock = new AtomicLong();
+        ReactiveFolder folder = null;
+        try {
+            for (int index = 0; index < 96; index++) {
+                Files.writeString(directory.resolve("entry-" + index + ".json"), "0", StandardCharsets.UTF_8);
+            }
+            folder = new ReactiveFolder(
+                    directory.toFile(),
+                    (created, changed, deleted) -> {
+                    },
+                    new KList<>(".json"),
+                    new KList<>(),
+                    new KList<>(),
+                    clock::get
+            );
+
+            assertFalse(folder.check());
+            assertTrue(reconciliationActive(folder));
+            clock.set(TimeUnit.SECONDS.toNanos(10L));
+            completeReconciliation(folder);
+
+            Field deadlineField = ReactiveFolder.class.getDeclaredField("nextReconciliationAtNanos");
+            deadlineField.setAccessible(true);
+            assertEquals(
+                    TimeUnit.SECONDS.toNanos(10L)
+                            + TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.CONTENT_RECONCILIATION_INTERVAL_MILLIS),
+                    deadlineField.getLong(folder)
+            );
+        } finally {
+            if (folder != null) {
+                folder.clear();
+            }
+            Files.walk(directory)
+                    .sorted(Comparator.reverseOrder())
+                    .map(Path::toFile)
+                    .forEach(File::delete);
+        }
+    }
+
+    @Test
+    public void signaledSaveDoesNotWaitForAnUnrelatedReconciliationBatch() throws Exception {
+        assertSignaledSaveDuringReconciliation(false);
+    }
+
+    @Test
+    public void failedSignaledSaveRetriesBeforeUnrelatedReconciliationFinishes() throws Exception {
+        assertSignaledSaveDuringReconciliation(true);
+    }
+
+    private void assertSignaledSaveDuringReconciliation(boolean failFirst) throws Exception {
+        Path directory = Files.createTempDirectory("reactive-folder-signaled-batch-test");
+        AtomicLong clock = new AtomicLong();
+        AtomicInteger attempts = new AtomicInteger();
+        Set<File> applied = new HashSet<>();
+        ReactiveFolder folder = null;
+        try {
+            Path silent = directory.resolve("silent.json");
+            Path signaled = directory.resolve("signaled.json");
+            Files.writeString(silent, "0", StandardCharsets.UTF_8);
+            Files.writeString(signaled, "0", StandardCharsets.UTF_8);
+            for (int index = 0; index < 256; index++) {
+                Files.writeString(directory.resolve("unchanged-" + index + ".json"), "0", StandardCharsets.UTF_8);
+            }
+            folder = new ReactiveFolder(directory.toFile(), (created, changed, deleted) -> {
+                if (attempts.incrementAndGet() == 1 && failFirst) {
+                    throw new IllegalStateException("retry signaled save");
+                }
+                applied.addAll(created);
+                applied.addAll(changed);
+                applied.addAll(deleted);
+            }, new KList<>(".json"), new KList<>(), new KList<>(), clock::get);
+            completeReconciliation(folder);
+            Field watcherField = ReactiveFolder.class.getDeclaredField("fw");
+            watcherField.setAccessible(true);
+            ((FolderWatcher) watcherField.get(folder)).clear();
+            FileTime originalTime = Files.getLastModifiedTime(silent);
+            Files.writeString(silent, "1", StandardCharsets.UTF_8);
+            Files.setLastModifiedTime(silent, originalTime);
+            prioritize(folder, silent);
+            clock.set(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.CONTENT_RECONCILIATION_INTERVAL_MILLIS));
+            assertFalse(folder.check());
+            assertTrue(reconciliationActive(folder));
+
+            FolderWatcher watcher = new FolderWatcher(directory.toFile());
+            watcher.checkModified();
+            watcherField.set(folder, watcher);
+            Files.writeString(signaled, "22", StandardCharsets.UTF_8);
+            clock.set(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.FULL_SCAN_INTERVAL_MILLIS));
+            assertFalse(folder.check());
+            clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.STABILITY_WINDOW_MILLIS + 1L));
+            if (failFirst) {
+                try {
+                    folder.check();
+                    throw new AssertionError("expected hotload failure");
+                } catch (IllegalStateException expected) {
+                    assertEquals("retry signaled save", expected.getMessage());
+                }
+                assertFalse(folder.check());
+                clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.HOTLOAD_COOLDOWN_MILLIS + 1L));
+            }
+
+            assertTrue(folder.check());
+            assertTrue(reconciliationActive(folder));
+            assertEquals(failFirst ? 2 : 1, attempts.get());
+            assertEquals(Set.of(silent.toFile().getAbsoluteFile(), signaled.toFile().getAbsoluteFile()), applied);
+            completeReconciliation(folder);
+            clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.STABILITY_WINDOW_MILLIS + 1L));
+            assertFalse(folder.check());
+            assertEquals(failFirst ? 2 : 1, attempts.get());
+        } finally {
+            if (folder != null) {
+                folder.clear();
+            }
+            Files.walk(directory)
+                    .sorted(Comparator.reverseOrder())
+                    .map(Path::toFile)
+                    .forEach(File::delete);
+        }
+    }
+
+    @Test(timeout = 8_000L)
+    public void failedHotloadRetainsTheQueuedBatchForRetry() throws Exception {
+        Path directory = Files.createTempDirectory("reactive-folder-retry-test");
+        Path watchedFile = directory.resolve("dimension.json");
+        Files.writeString(watchedFile, "{\"v\":1}", StandardCharsets.UTF_8);
+        AtomicLong clock = new AtomicLong();
+        AtomicInteger attempts = new AtomicInteger();
+        ReactiveFolder folder = null;
+        try {
+            folder = new ReactiveFolder(
+                    directory.toFile(),
+                    (created, changed, deleted) -> {
+                        if (attempts.incrementAndGet() == 1) {
+                            throw new IllegalStateException("retry");
+                        }
+                    },
+                    new KList<>(".json"),
+                    new KList<>(),
+                    new KList<>(),
+                    clock::get
+            );
+
+            Files.writeString(watchedFile, "{\"v\":22}", StandardCharsets.UTF_8);
+            assertFalse(folder.check());
+            clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.STABILITY_WINDOW_MILLIS + 1L));
+            try {
+                folder.check();
+                throw new AssertionError("expected hotload failure");
+            } catch (IllegalStateException expected) {
+                assertEquals("retry", expected.getMessage());
+            }
+
+            assertFalse(folder.check());
+            clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(ReactiveFolder.HOTLOAD_COOLDOWN_MILLIS + 1L));
+            assertTrue(folder.check());
+            assertEquals(2, attempts.get());
+        } finally {
+            if (folder != null) {
+                folder.clear();
+            }
+            Files.walk(directory)
+                    .sorted(Comparator.reverseOrder())
+                    .map(Path::toFile)
+                    .forEach(File::delete);
+        }
+    }
+
+    private void completeReconciliation(ReactiveFolder folder) throws Exception {
+        for (int pass = 0; pass < 1_000; pass++) {
+            folder.check();
+            if (!reconciliationActive(folder)) {
+                return;
+            }
+        }
+        throw new AssertionError("Reactive folder reconciliation did not complete");
+    }
+
+    private boolean reconciliationActive(ReactiveFolder folder) throws Exception {
+        Field cycleField = ReactiveFolder.class.getDeclaredField("reconciliationCycleActive");
+        cycleField.setAccessible(true);
+        Field digestField = ReactiveFolder.class.getDeclaredField("reconciliationDigest");
+        digestField.setAccessible(true);
+        return cycleField.getBoolean(folder) || digestField.get(folder) != null;
+    }
+
+    private void prioritize(ReactiveFolder folder, Path file) throws Exception {
+        Field priorityField = ReactiveFolder.class.getDeclaredField("reconciliationPriority");
+        priorityField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Set<File> priority = (Set<File>) priorityField.get(folder);
+        priority.add(file.toFile().getAbsoluteFile());
+    }
+}

@@ -1,0 +1,253 @@
+package art.arcane.wormholes.render;
+
+import com.github.retrooper.packetevents.protocol.player.Equipment;
+
+import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
+
+import java.util.HashMap;
+import java.util.Objects;
+import java.util.UUID;
+
+import org.bukkit.Bukkit;
+import org.bukkit.Material;
+import org.bukkit.World;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.entity.Player;
+
+import art.arcane.wormholes.Wormholes;
+import art.arcane.wormholes.network.view.RemoteViewCache;
+import art.arcane.wormholes.network.view.ViewSubscriptionManager;
+import art.arcane.wormholes.portal.ILocalPortal;
+import art.arcane.wormholes.portal.IPortal;
+import art.arcane.wormholes.portal.ITunnel;
+import art.arcane.wormholes.portal.RemotePortal;
+import art.arcane.wormholes.portal.UniversalTunnel;
+import art.arcane.wormholes.render.view.ProjectionWorldView;
+import art.arcane.wormholes.render.view.ProjectionWorldViewProvider;
+import art.arcane.wormholes.render.view.RemoteWorldView;
+import art.arcane.optics.scan.PassRevision;
+import art.arcane.optics.scan.ScanDestination;
+
+final class ProjectorDestination implements ScanDestination<ILocalPortal, ProjectionWorldView> {
+    private static final long IDENTITY_SEED = 0x3C6EF372FE94F82BL;
+
+    private final ILocalPortal portal;
+    private final ProjectionWorldViewProvider viewProvider;
+    private final HashMap<World, ProjectionWorldView> liveViews;
+    private BlockData remoteFallback;
+    private String remoteFallbackState;
+    private RemoteWorldView cachedRemoteWorldView;
+    private RemoteViewCache.RemoteView<BlockData, EntityData<?>, Equipment> cachedRemoteViewSource;
+
+    ILocalPortal dest;
+    IPortal destAnchor;
+    World localWorld;
+    World destWorld;
+    ProjectionWorldView remoteView;
+    ProjectionWorldView destView;
+    ProjectionWorldView localView;
+    double originX;
+    double originY;
+    double originZ;
+    boolean mirrorMode;
+    int mirrorRotationQuarterTurns;
+
+    @Override
+    public ProjectionWorldView localView() {
+        return localView;
+    }
+
+    @Override
+    public ProjectionWorldView destView() {
+        return destView;
+    }
+
+    @Override
+    public ILocalPortal dest() {
+        return dest;
+    }
+
+    @Override
+    public IPortal destAnchor() {
+        return destAnchor;
+    }
+
+    @Override
+    public double originX() {
+        return originX;
+    }
+
+    @Override
+    public double originY() {
+        return originY;
+    }
+
+    @Override
+    public double originZ() {
+        return originZ;
+    }
+
+    @Override
+    public boolean mirrorMode() {
+        return mirrorMode;
+    }
+
+    @Override
+    public int mirrorRotationQuarterTurns() {
+        return mirrorRotationQuarterTurns;
+    }
+
+    ProjectorDestination(ILocalPortal portal, ProjectionWorldViewProvider viewProvider) {
+        this.portal = portal;
+        this.viewProvider = viewProvider;
+        this.liveViews = new HashMap<World, ProjectionWorldView>(4);
+    }
+
+    /** A destination view safe to read off the observer thread: remote views get their own decode cache. */
+    ProjectionWorldView plateView() {
+        if (destView instanceof RemoteWorldView && cachedRemoteViewSource != null) {
+            return new RemoteWorldView(cachedRemoteViewSource, remoteFallback);
+        }
+        return destView;
+    }
+
+    ProjectionWorldView liveView(World world) {
+        ProjectionWorldView view = liveViews.get(world);
+        if (view == null) {
+            view = viewProvider.view(world);
+            liveViews.put(world, view);
+        }
+        return view;
+    }
+
+    Outcome resolve(Player observer, World viewWorld, PortalProjector.RtpProjectionTarget rtpTarget, int meshDistance) {
+        boolean rtpMode = rtpTarget != null;
+        mirrorMode = !rtpMode && portal.isMirrorMode();
+        mirrorRotationQuarterTurns = mirrorMode ? portal.getMirrorRotation().getQuarterTurns() : 0;
+        ITunnel activeTunnel = portal.getTunnel();
+        IPortal linkedDestination = activeTunnel == null ? null : activeTunnel.getDestination();
+        if (!rtpMode && !mirrorMode && linkedDestination == null) {
+            Wormholes.v("[Projector] portal " + portal.getName() + " no longer linked, closing projector");
+            return Outcome.CLOSE;
+        }
+
+        remoteView = null;
+        localWorld = portal.getWorld();
+        if (rtpMode) {
+            dest = null;
+            destAnchor = null;
+            destWorld = rtpTarget.world();
+        } else if (mirrorMode) {
+            dest = portal;
+            destAnchor = portal;
+            destWorld = localWorld;
+        } else {
+            IPortal destPortal = linkedDestination;
+            if (destPortal instanceof ILocalPortal localDest) {
+                dest = localDest;
+                destAnchor = localDest;
+                destWorld = dest.getWorld();
+            } else if (destPortal instanceof RemotePortal remotePortal && activeTunnel instanceof UniversalTunnel universal) {
+                dest = null;
+                destAnchor = remotePortal;
+                destWorld = null;
+                remoteView = remoteWorldView(universal.getServerName(), remotePortal.getId(), meshDistance);
+                if (remoteView == null) {
+                    Wormholes.v("[Projector] portal " + portal.getName() + " remote view unavailable, closing projector");
+                    return Outcome.CLOSE;
+                }
+            } else {
+                Wormholes.v("[Projector] portal " + portal.getName() + " destination is unresolvable, closing projector");
+                return Outcome.CLOSE;
+            }
+        }
+
+        if (localWorld == null || (destWorld == null && remoteView == null)) {
+            Wormholes.w("[Projector] portal " + portal.getName() + " has null world (local=" + localWorld + " dest=" + destWorld + "), closing");
+            return Outcome.CLOSE;
+        }
+
+        destView = remoteView != null ? remoteView : liveView(destWorld);
+        localView = liveView(localWorld);
+        if (destView == null || localView == null) {
+            return Outcome.WAIT;
+        }
+
+        if (observer == null || !observer.isOnline()) {
+            return Outcome.CLOSE;
+        }
+
+        if (!localWorld.equals(viewWorld)) {
+            return Outcome.CLOSE;
+        }
+
+        originX = rtpMode ? rtpTarget.originX() : destAnchor.getOrigin().x();
+        originY = rtpMode ? rtpTarget.originY() : destAnchor.getOrigin().y();
+        originZ = rtpMode ? rtpTarget.originZ() : destAnchor.getOrigin().z();
+        int localOriginBlockX = (int) Math.floor(portal.getOrigin().x());
+        int localOriginBlockZ = (int) Math.floor(portal.getOrigin().z());
+        if (!localView.isChunkReady(localOriginBlockX, localOriginBlockZ)) {
+            localView.requestChunk(localOriginBlockX, localOriginBlockZ);
+            return Outcome.WAIT;
+        }
+        if (destView.getWorld() != null) {
+            int remoteOriginBlockX = (int) Math.floor(originX);
+            int remoteOriginBlockZ = (int) Math.floor(originZ);
+            if (!destView.isChunkReady(remoteOriginBlockX, remoteOriginBlockZ)) {
+                destView.requestChunk(remoteOriginBlockX, remoteOriginBlockZ);
+                return Outcome.WAIT;
+            }
+        }
+        return Outcome.READY;
+    }
+
+    long identity(PortalProjector.RtpProjectionTarget rtpTarget) {
+        if (rtpTarget != null) {
+            return rtpTarget.plateIdentity();
+        }
+        long hash = mixId(IDENTITY_SEED, destAnchor == null ? null : destAnchor.getId());
+        hash = mixId(hash, destWorld == null ? null : destWorld.getUID());
+        return remoteView == null ? hash : PassRevision.mix(hash, Objects.hashCode(remoteFallbackState));
+    }
+
+    private ProjectionWorldView remoteWorldView(String peerName, UUID portalId, int meshDistance) {
+        ViewSubscriptionManager<BlockData, EntityData<?>, Equipment> subscriptions = Wormholes.viewSubscriptions;
+        if (subscriptions == null || peerName == null || portalId == null) {
+            return null;
+        }
+        RemoteViewCache.RemoteView<BlockData, EntityData<?>, Equipment> view = subscriptions.touch(peerName, portalId, new ViewSubscriptionManager.Request(portal.getNetworkViewUnsubscribeGraceSeconds(), meshDistance));
+        String fallbackState = portal.getNetworkViewFallbackBlock();
+        boolean fallbackChanged = remoteFallback == null || !fallbackState.equals(remoteFallbackState);
+        if (fallbackChanged) {
+            remoteFallback = parseRemoteFallback(fallbackState);
+            remoteFallbackState = fallbackState;
+        }
+        if (!fallbackChanged && cachedRemoteViewSource == view && cachedRemoteWorldView != null) {
+            return cachedRemoteWorldView;
+        }
+        cachedRemoteViewSource = view;
+        cachedRemoteWorldView = new RemoteWorldView(view, remoteFallback);
+        return cachedRemoteWorldView;
+    }
+
+    private static long mixId(long hash, UUID id) {
+        if (id == null) {
+            return PassRevision.mix(hash, 0L);
+        }
+        return PassRevision.mix(PassRevision.mix(hash, id.getMostSignificantBits()), id.getLeastSignificantBits());
+    }
+
+    private static BlockData parseRemoteFallback(String fallbackState) {
+        try {
+            return Bukkit.createBlockData(fallbackState);
+        } catch (IllegalArgumentException e) {
+            return Material.AIR.createBlockData();
+        }
+    }
+
+    enum Outcome {
+        READY,
+        CLOSE,
+        WAIT
+    }
+}

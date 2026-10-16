@@ -1,0 +1,125 @@
+package art.arcane.wormholes.network.client;
+
+import art.arcane.optics.crossing.GravityFrame;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+import art.arcane.optics.aperture.ApertureDescriptor;
+import art.arcane.optics.crossing.MomentumRule;
+import art.arcane.optics.crossing.OrientationRule;
+import art.arcane.optics.crossing.ScaleRule;
+import art.arcane.optics.frame.AxisPermutation;
+import art.arcane.optics.frame.OpticTransform;
+import art.arcane.optics.math.Face;
+import art.arcane.optics.math.Vec3d;
+import art.arcane.optics.stream.EnvironmentState;
+import art.arcane.optics.stream.ViewStreamCapability;
+import art.arcane.optics.stream.ViewStreamCodec;
+import art.arcane.optics.stream.ViewStreamLimits;
+import art.arcane.optics.stream.ViewStreamMessage;
+import art.arcane.optics.shape.ShapeDescriptor;
+import art.arcane.wormholes.portal.ApertureKind;
+
+public final class ClientViewFixtures {
+    static final ViewStreamCodec CODEC = new ViewStreamCodec(List.of(FxExtension.INSTANCE, TravelExtension.INSTANCE));
+
+    record Vector(String name, ViewStreamMessage message, long caps, int seq, int flags) {
+        boolean clientbound() {
+            return ClientViewFixtures.CODEC.clientbound(message);
+        }
+
+        TravelMessage travel() {
+            return (TravelMessage) ((ViewStreamMessage.Extension) message).payload();
+        }
+    }
+
+    private ClientViewFixtures() {
+    }
+
+    static List<Vector> vectors() {
+        List<Vector> out = new ArrayList<Vector>();
+        out.add(new Vector("fx", FxExtension.INSTANCE.wrap(fx()), ViewStreamCapability.ALL, 11, ViewStreamLimits.FLAG_LAST));
+        out.addAll(travelVectors());
+        return out;
+    }
+
+    static List<Vector> travelVectors() {
+        List<Vector> out = new ArrayList<Vector>();
+        out.add(travel("travel_begin", travelBegin(), ViewStreamCapability.ALL, 18, 0));
+        out.add(travel("travel_cancel", new TravelMessage.TravelCancel(new UUID(12, 34), 3L), ViewStreamCapability.ALL, 22,
+            ViewStreamLimits.FLAG_LAST));
+        out.add(travel("travel_cross", new TravelMessage.TravelCross(new UUID(12, 34), 3L, 9L,
+            new TravelMessage.TravelPose(635.5D, 65.0D, -4681.4D, 90.0F, -12.0F),
+            new Vec3d(635.5D, 66.62D, -4681.6D), new Vec3d(635.5D, 66.62D, -4681.4D)), ViewStreamCapability.NONE, 0, 0));
+        out.add(travel("travel_begin_resident", residentBegin(), ViewStreamCapability.ALL, 25, 0));
+        out.add(travel("remote_level_open", new TravelMessage.RemoteLevelOpen(4, travelBegin().world(), travelBegin().environment(), 8,
+            new TravelMessage.TravelCoordinate(-32, -10)), ViewStreamCapability.ALL, 26, 0));
+        out.add(travel("remote_level_close", new TravelMessage.RemoteLevelClose(4), ViewStreamCapability.ALL, 27, ViewStreamLimits.FLAG_LAST));
+        out.add(travel("routed_packet", new TravelMessage.RoutedPacket(4, 17, 0, 1, 4, new byte[] {5, 6, 7, 8}),
+            ViewStreamCapability.ALL, 28, 0));
+        out.add(travel("travel_accept", new TravelMessage.TravelAccept(new UUID(12, 34), 3L, 9L, travelBegin().arrival(),
+            new Vec3d(0.25D, -0.5D, 1.0D), 4, true, 1200L, GravityFrame.WORLD, 1.0D), ViewStreamCapability.ALL, 29, ViewStreamLimits.FLAG_LAST));
+        out.add(travel("remote_view_ack", new TravelMessage.RemoteViewAck(4, 17, 8), ViewStreamCapability.NONE, 0, 0));
+        return out;
+    }
+
+    static TravelMessage.TravelBegin residentBegin() {
+        TravelMessage.TravelBegin base = travelBegin();
+        return new TravelMessage.TravelBegin(base.token(), base.generation(), base.sourcePortal(), base.sourceWorld(),
+            base.sourceGeometry().withShape(ShapeDescriptor.parse("circle")), base.destinationToSource(), 3.0F, base.world(), base.arrival(),
+            base.environment().withScale(1.0F / 3.0F),
+            new TravelMessage.ArrivalRules(OrientationRule.LOOK, true, new MomentumRule(MomentumRule.Mode.SCALE, 0.75D, 3.5D,
+                new Vec3d(0.0D, 0.25D, 0.0D)), ScaleRule.ratio(0.25D, 4.0D), false), true, 4, base.doorCollision());
+    }
+
+    public static TravelMessage.TravelBegin travelBegin() {
+        EnvironmentState base = environment();
+        EnvironmentState.World world = base.world();
+        EnvironmentState environment = new EnvironmentState(base.gameTime(), base.sky(), base.fog(), base.lighting(),
+            base.clouds(), OpticTransform.IDENTITY, base.dimension(),
+            new EnvironmentState.World("minecraft:overworld", world.clockTime(), world.biomeKey(), world.seaLevel(),
+                world.blockLight(), world.skyLight(), world.logicalHeight(), world.hasCeiling(), world.ambientLight(),
+                world.eyeMedium(), world.hasFixedTime()), 1.0F);
+        return new TravelMessage.TravelBegin(new UUID(12, 34), 3L, new UUID(56, 78), "minecraft:the_nether",
+            geometry(), OpticTransform.of(AxisPermutation.of(Face.S, Face.U, Face.E), 4, 0, 6), 1.0F,
+            new TravelMessage.TravelWorld("minecraft:overworld", "minecraft:overworld", 123456789L, false, true, 63, -64, 384),
+            new TravelMessage.TravelPose(-511.5D, 81.0D, -159.5D, 90.0F, -12.0F),
+            environment, TravelMessage.ArrivalRules.FRAME, false, 0, null);
+    }
+
+    static EnvironmentState environment() {
+        EnvironmentState.Color color = new EnvironmentState.Color(0.125F, 0.5F, 1.25F);
+        EnvironmentState.ColorAlpha alpha = new EnvironmentState.ColorAlpha(0.75F, 0.5F, 0.25F, 0.5F);
+        return new EnvironmentState(18000L,
+            new EnvironmentState.Sky(EnvironmentState.Skybox.OVERWORLD, 1.5F, 2.5F, 3.5F, 0.8F, alpha, color, 5, 0.25F, 0.5F),
+            new EnvironmentState.Fog(color, -8.0F, 96.0F, 512.0F, 256.0F, color, 0.0F, 32.0F),
+            new EnvironmentState.Lighting(color, 0.75F, color, color), new EnvironmentState.Clouds(alpha, 192.0F),
+            OpticTransform.of(AxisPermutation.of(Face.N, Face.U, Face.E), -128.5D, 96.0D, 33.25D),
+            new EnvironmentState.Dimension(-64, 384, true, EnvironmentState.CardinalLighting.DEFAULT, 63.0D, false),
+            new EnvironmentState.World("test:destination", 72000L, "minecraft:plains", 63, 7, 15, 256, true, 0.1F, EnvironmentState.EyeMedium.WATER, true), 1.0F);
+    }
+
+    static ApertureDescriptor geometry() {
+        boolean[] open = new boolean[3 * 3];
+        for (int i = 0; i < open.length; i++) {
+            open[i] = i != 4;
+        }
+        return new ApertureDescriptor(635, 64, -4682, 3, true, 0, false, 3, 3, ApertureDescriptor.apertureMask(3, 3, open), ShapeDescriptor.FULL,
+            0.25F, 0.75F, 1.2F, 64, 1, 1, 6, 0, 1, ApertureDescriptor.FIDELITY_DISPLAY_ENTITIES | ApertureDescriptor.FIDELITY_WEATHER,
+            ApertureKind.RTP, 0.0D, 0, 0x7A7A7A7A7A7A7A7AL, List.of());
+    }
+
+    static FxMessage.Fx fx() {
+        return new FxMessage.Fx(7, List.of(
+            new FxMessage.FxEmitter(FxMessage.FxKind.RIM_DUST, "minecraft:portal", 635.5D, 64.5D, -4681.5D, 1.0F, 0.0F, 5, 0),
+            new FxMessage.FxEmitter(FxMessage.FxKind.SOUND, "minecraft:block.portal.ambient", 636.0D, 65.0D, -4681.0D, 0.5F, 1.1F, 0, 1),
+            new FxMessage.FxEmitter(FxMessage.FxKind.ANIMATION, "", 637.5D, 66.0D, -4686.5D, 3.0F, 4.0F, 0, 0x42),
+            new FxMessage.FxEmitter(FxMessage.FxKind.BURST, "minecraft:reverse_portal", 637.5D, 66.0D, -4686.5D, 0.4F, 0.6F, 12, 40)));
+    }
+
+    private static Vector travel(String name, TravelMessage message, long caps, int seq, int flags) {
+        return new Vector(name, TravelExtension.INSTANCE.wrap(message), caps, seq, flags);
+    }
+}

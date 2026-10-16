@@ -1,0 +1,11 @@
+# Gradle outputs and local state
+**/.gradle/
+**/build/
+**/.idea/
+**/logs/
+**/.jqwik-database
+*.hprof
+local.properties
+**/run/
+Thumbs.db
+.DS_Store

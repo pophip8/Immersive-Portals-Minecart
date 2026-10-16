@@ -1,0 +1,286 @@
+package art.arcane.wormholes.render;
+
+import art.arcane.optics.entity.EntityProfile;
+import com.github.retrooper.packetevents.util.Vector3d;
+
+import art.arcane.optics.math.Vec3d;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.anyDouble;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Proxy;
+import java.util.List;
+import java.util.UUID;
+
+import org.bukkit.entity.Player;
+import org.junit.jupiter.api.Test;
+
+import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
+import com.github.retrooper.packetevents.protocol.player.Equipment;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDestroyEntities;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSetPassengers;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerTeams;
+
+import art.arcane.wormholes.Settings;
+import art.arcane.optics.entity.EntitySnapshot;
+import art.arcane.wormholes.portal.IPortal;
+import art.arcane.wormholes.render.view.ProjectionEntityView;
+import art.arcane.optics.entity.SpoofRegistry;
+import art.arcane.optics.entity.SpoofedEntity;
+import art.arcane.optics.frame.OpticTransform;
+import art.arcane.wormholes.platform.QueuedOpticsScheduler;
+import java.util.concurrent.atomic.AtomicInteger;
+
+public final class ProjectedEntityRendererTeardownTest {
+    private static final AtomicInteger ENTITY_IDS = new AtomicInteger(1);
+
+    @Test
+    public void emptyOnlineTeardownDoesNotOpenOrFlushPacketBatch() {
+        ProjectedEntityPacketRecorder recorder = ProjectedEntityPacketRecorder.installWithBatchUser();
+        try {
+            EntityRenderPacketChannel channel = new EntityRenderPacketChannel();
+            BukkitEntityRegistryHost output = new BukkitEntityRegistryHost(channel, BukkitEntityRegistryHost.PLUGIN_VISIBILITY);
+            SpoofRegistry<Player, Vector3d> registry = new SpoofRegistry<>(output);
+            ProjectedEntityRenderer renderer = new ProjectedEntityRenderer(output, registry, new QueuedOpticsScheduler());
+
+            renderer.close(ProjectedEntityPacketRecorder.player(true));
+
+            assertTrue(recorder.sent().isEmpty());
+            assertEquals(0, recorder.batchLookups());
+            assertEquals(0, recorder.batchFlushes());
+            assertEquals(0, renderer.getSpoofedCount());
+        } finally {
+            recorder.uninstall();
+        }
+    }
+
+    @Test
+    public void identityOnlyTeardownStillRemovesItsClientNameTeam() {
+        ProjectedEntityPacketRecorder recorder = ProjectedEntityPacketRecorder.installWithBatchUser();
+        try {
+            Player observer = ProjectedEntityPacketRecorder.player(true);
+            EntityRenderPacketChannel channel = new EntityRenderPacketChannel();
+            BukkitEntityRegistryHost output = new BukkitEntityRegistryHost(channel, BukkitEntityRegistryHost.PLUGIN_VISIBILITY);
+            EntityRenderPlayerIdentity identity = output.identity();
+            SpoofRegistry<Player, Vector3d> registry = new SpoofRegistry<>(output);
+            ProjectedEntityRenderer renderer = new ProjectedEntityRenderer(output, registry, new QueuedOpticsScheduler());
+            channel.begin(observer);
+            identity.sendRemotePlayerInfo(observer, null,
+                SpoofedEntity.create(ENTITY_IDS::getAndIncrement, true, false, true), false);
+            channel.end();
+
+            renderer.close(observer);
+
+            assertEquals(2, recorder.batchLookups());
+            assertEquals(2, recorder.batchFlushes());
+            List<WrapperPlayServerTeams> teams = recorder.sentOfType(WrapperPlayServerTeams.class);
+            assertEquals(3, teams.size());
+            assertEquals(WrapperPlayServerTeams.TeamMode.REMOVE, teams.get(2).getTeamMode());
+        } finally {
+            recorder.uninstall();
+        }
+    }
+
+    @Test
+    public void discardDestroysSpoofedEntitiesWhileTheObserverCanStillReceiveThem() {
+        ProjectedEntityPacketRecorder recorder = ProjectedEntityPacketRecorder.install();
+        try {
+            EntityRenderPacketChannel channel = new EntityRenderPacketChannel();
+            BukkitEntityRegistryHost output = new BukkitEntityRegistryHost(channel, BukkitEntityRegistryHost.PLUGIN_VISIBILITY);
+            SpoofRegistry<Player, Vector3d> registry = new SpoofRegistry<>(output);
+            SpoofedEntity ghost = SpoofedEntity.create(ENTITY_IDS::getAndIncrement, false, false, true);
+            UUID sourceId = UUID.randomUUID();
+            registry.track(sourceId, ghost);
+            ProjectedEntityRenderer renderer = new ProjectedEntityRenderer(output, registry, new QueuedOpticsScheduler());
+
+            renderer.discard(ProjectedEntityPacketRecorder.player(true));
+
+            List<WrapperPlayServerDestroyEntities> destroys = recorder.sentOfType(WrapperPlayServerDestroyEntities.class);
+            assertEquals(1, destroys.size());
+            assertArrayEquals(new int[] { ghost.fakeId() }, destroys.get(0).getEntityIds());
+            assertFalse(renderer.hasProjectedEntity(sourceId));
+            assertEquals(0, renderer.getSpoofedCount());
+        } finally {
+            recorder.uninstall();
+        }
+    }
+
+    @Test
+    public void discardDropsEverythingWithoutPacketsWhenTheObserverIsOffline() {
+        ProjectedEntityPacketRecorder recorder = ProjectedEntityPacketRecorder.install();
+        try {
+            EntityRenderPacketChannel channel = new EntityRenderPacketChannel();
+            BukkitEntityRegistryHost output = new BukkitEntityRegistryHost(channel, BukkitEntityRegistryHost.PLUGIN_VISIBILITY);
+            SpoofRegistry<Player, Vector3d> registry = new SpoofRegistry<>(output);
+            UUID sourceId = UUID.randomUUID();
+            registry.track(sourceId, SpoofedEntity.create(ENTITY_IDS::getAndIncrement, false, false, true));
+            ProjectedEntityRenderer renderer = new ProjectedEntityRenderer(output, registry, new QueuedOpticsScheduler());
+
+            renderer.discard(ProjectedEntityPacketRecorder.player(false));
+
+            assertTrue(recorder.sent().isEmpty());
+            assertEquals(0, recorder.batchLookups());
+            assertFalse(renderer.hasProjectedEntity(sourceId));
+            assertEquals(0, renderer.getSpoofedCount());
+        } finally {
+            recorder.uninstall();
+        }
+    }
+
+    @Test
+    public void failedDestroyRemainsRetryableUntilThePacketSucceeds() {
+        ProjectedEntityPacketRecorder recorder = ProjectedEntityPacketRecorder.install();
+        try {
+            EntityRenderPacketChannel channel = new EntityRenderPacketChannel();
+            BukkitEntityRegistryHost output = new BukkitEntityRegistryHost(channel, BukkitEntityRegistryHost.PLUGIN_VISIBILITY);
+            SpoofRegistry<Player, Vector3d> registry = new SpoofRegistry<>(output);
+            SpoofedEntity ghost = SpoofedEntity.create(ENTITY_IDS::getAndIncrement, false, false, true);
+            UUID sourceId = UUID.randomUUID();
+            registry.track(sourceId, ghost);
+            ProjectedEntityRenderer renderer = new ProjectedEntityRenderer(output, registry, new QueuedOpticsScheduler());
+            Player observer = ProjectedEntityPacketRecorder.player(true);
+
+            recorder.failNextSend();
+            renderer.discard(observer);
+
+            assertFalse(renderer.hasProjectedEntity(sourceId));
+            assertEquals(1, renderer.getSpoofedCount());
+            assertTrue(recorder.sentOfType(WrapperPlayServerDestroyEntities.class).isEmpty());
+
+            renderer.discard(observer);
+
+            List<WrapperPlayServerDestroyEntities> destroys =
+                recorder.sentOfType(WrapperPlayServerDestroyEntities.class);
+            assertEquals(1, destroys.size());
+            assertArrayEquals(new int[] { ghost.fakeId() }, destroys.get(0).getEntityIds());
+            assertEquals(0, renderer.getSpoofedCount());
+        } finally {
+            recorder.uninstall();
+        }
+    }
+
+    @Test
+    public void hidingAnEntityDestroysItsExistingProjection() {
+        ProjectedEntityPacketRecorder recorder = ProjectedEntityPacketRecorder.install();
+        try {
+            EntityRenderPacketChannel channel = new EntityRenderPacketChannel();
+            BukkitEntityRegistryHost output = new BukkitEntityRegistryHost(channel, BukkitEntityRegistryHost.PLUGIN_VISIBILITY);
+            SpoofRegistry<Player, Vector3d> registry = new SpoofRegistry<>(output);
+            UUID sourceId = UUID.randomUUID();
+            SpoofedEntity item = SpoofedEntity.create(ENTITY_IDS::getAndIncrement, false, false, false);
+            registry.track(sourceId, item);
+            ProjectedEntityRenderer renderer = new ProjectedEntityRenderer(output, registry, new QueuedOpticsScheduler());
+            Player observer = ProjectedEntityPacketRecorder.player(true);
+            EntitySnapshot visual = mock(EntitySnapshot.class);
+            when(visual.id()).thenReturn(sourceId);
+            ProjectionEntityView view = mock(ProjectionEntityView.class);
+            when(view.getEntities(anyDouble(), anyDouble(), anyDouble(), anyDouble())).thenReturn(List.of(visual));
+            when(view.isVisibleTo(observer, sourceId)).thenReturn(false);
+
+            renderer.applySnapshot(observer, null, portalAt(0.0D, 64.0D, 0.0D), view, null, 32.0D, OpticTransform.IDENTITY,
+                BukkitEntityOcclusion.create());
+
+            assertFalse(renderer.hasProjectedEntity(sourceId));
+            assertArrayEquals(new int[] {item.fakeId()},
+                recorder.sentOfType(WrapperPlayServerDestroyEntities.class).getFirst().getEntityIds());
+        } finally {
+            recorder.uninstall();
+        }
+    }
+
+    @Test
+    public void snapshotPassDestroysCulledSpoofsBeforeEmittingRelationshipPackets() {
+        boolean spoofing = Settings.ENTITY_SPOOFING;
+        int maxSpoofed = Settings.MAX_SPOOFED_ENTITIES;
+        ProjectedEntityPacketRecorder recorder = ProjectedEntityPacketRecorder.install();
+        try {
+            Settings.ENTITY_SPOOFING = true;
+            Settings.MAX_SPOOFED_ENTITIES = 24;
+            EntityRenderPacketChannel channel = new EntityRenderPacketChannel();
+            BukkitEntityRegistryHost output = new BukkitEntityRegistryHost(channel, BukkitEntityRegistryHost.PLUGIN_VISIBILITY);
+            SpoofRegistry<Player, Vector3d> registry = new SpoofRegistry<>(output);
+            SpoofedEntity vehicle = SpoofedEntity.create(ENTITY_IDS::getAndIncrement, false, false, true);
+            vehicle.setLastPassengers(new int[] { vehicle.fakeId() + 1 });
+            registry.track(UUID.randomUUID(), vehicle);
+            ProjectedEntityRenderer renderer = new ProjectedEntityRenderer(output, registry, new QueuedOpticsScheduler());
+            Player observer = ProjectedEntityPacketRecorder.player(true);
+
+            renderer.applySnapshot(observer, null, portalAt(0.0D, 64.0D, 0.0D), emptyEntityView(), null, 32.0D, OpticTransform.IDENTITY,
+                BukkitEntityOcclusion.create());
+
+            assertTrue(recorder.sentOfType(WrapperPlayServerSetPassengers.class).isEmpty());
+            assertEquals(1, recorder.sentOfType(WrapperPlayServerDestroyEntities.class).size());
+            assertEquals(0, renderer.getSpoofedCount());
+        } finally {
+            recorder.uninstall();
+            Settings.ENTITY_SPOOFING = spoofing;
+            Settings.MAX_SPOOFED_ENTITIES = maxSpoofed;
+        }
+    }
+
+    private static ProjectionEntityView emptyEntityView() {
+        return new ProjectionEntityView() {
+            @Override
+            public boolean isVisibleTo(Player observer, UUID entityId) {
+                return true;
+            }
+
+            @Override
+            public List<EntitySnapshot> getEntities(double centerX, double centerY, double centerZ, double range) {
+                return List.of();
+            }
+
+            @Override
+            public EntityProfile getProfile(UUID entityId) {
+                return null;
+            }
+
+            @Override
+            public List<EntityData<?>> getMetadata(UUID entityId) {
+                return List.of();
+            }
+
+            @Override
+            public List<Equipment> getEquipment(UUID entityId) {
+                return List.of();
+            }
+
+            @Override
+            public int getStateVersion(UUID entityId) {
+                return 0;
+            }
+        };
+    }
+
+    private static IPortal portalAt(double x, double y, double z) {
+        UUID id = UUID.randomUUID();
+        InvocationHandler handler = (proxy, method, args) -> {
+            String name = method.getName();
+            if ("getOrigin".equals(name) || "origin".equals(name)) {
+                return new Vec3d(x, y, z);
+            }
+            if ("getId".equals(name) || "id".equals(name)) {
+                return id;
+            }
+            if ("getName".equals(name)) {
+                return "remote";
+            }
+            if ("toString".equals(name)) {
+                return "remote";
+            }
+            if ("hashCode".equals(name)) {
+                return Integer.valueOf(id.hashCode());
+            }
+            if ("equals".equals(name)) {
+                return Boolean.valueOf(proxy == args[0]);
+            }
+            return null;
+        };
+        return (IPortal) Proxy.newProxyInstance(IPortal.class.getClassLoader(), new Class<?>[] { IPortal.class }, handler);
+    }
+}

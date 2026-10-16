@@ -1,0 +1,821 @@
+package art.arcane.volmlib.util.board;
+
+import art.arcane.volmlib.util.scheduling.FoliaScheduler;
+import art.arcane.volmlib.nativelib.NativeAdapters;
+import art.arcane.volmlib.nativelib.scoreboard.ScoreboardPackets;
+import art.arcane.volmlib.nativelib.scoreboard.ScoreboardPackets.ScoreboardHandle;
+import art.arcane.volmlib.nativelib.scoreboard.ScoreboardPackets.ObjectiveHandle;
+import art.arcane.volmlib.nativelib.scoreboard.ScoreboardPackets.ObjectiveOperation;
+import lombok.NonNull;
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.entity.Player;
+import org.bukkit.metadata.FixedMetadataValue;
+import org.bukkit.metadata.MetadataValue;
+import org.bukkit.plugin.Plugin;
+import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scoreboard.Criteria;
+import org.bukkit.scoreboard.DisplaySlot;
+import org.bukkit.scoreboard.Objective;
+import org.bukkit.scoreboard.Scoreboard;
+import org.bukkit.scoreboard.Team;
+
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.logging.Level;
+import java.util.stream.IntStream;
+
+public class Board {
+    private static final int MAX_LINES = 15;
+    private static final long DISPLAY_OBJECTIVE_REASSERT_NANOS = 5_000_000_000L;
+    private static final long DISPLAY_OBJECTIVE_SPREAD_NANOS = 2_000_000_000L;
+    private static final int UNSET_SCORE = Integer.MIN_VALUE;
+    private static final String[] CACHED_ENTRIES = new String[ChatColor.values().length];
+    private static final boolean CANVAS_RUNTIME = detectCanvasRuntime();
+    private static final ScoreNumberFormatBridge NUMBER_FORMATS = new ScoreNumberFormatBridge();
+
+    static {
+        IntStream.range(0, MAX_LINES).forEach(i -> CACHED_ENTRIES[i] = ChatColor.values()[i].toString() + ChatColor.RESET);
+    }
+
+    private final Player player;
+    private final Objective objective;
+    private final PacketSidebar packetSidebar;
+    private final Scoreboard previousScoreboard;
+    private final Scoreboard ownedScoreboard;
+    private final String[] appliedLines = new String[MAX_LINES];
+    private final int[] appliedScores = new int[MAX_LINES];
+    private String appliedTitle;
+    private Boolean appliedHideScores;
+    private int appliedSlots;
+    private boolean normalObjectiveDisplayed;
+    private BoardSettings boardSettings;
+    private boolean useNormalBackend;
+    private boolean ready;
+    private boolean removed;
+
+    public Board(@NonNull Player player, BoardSettings boardSettings) {
+        this.player = player;
+        this.boardSettings = boardSettings;
+        this.packetSidebar = new PacketSidebar(player);
+        Arrays.fill(this.appliedScores, UNSET_SCORE);
+
+        Scoreboard previous = currentScoreboard();
+        BoardLease lease = shouldAttemptNormalBackend()
+                ? acquireNormalBackend(previous)
+                : BoardLease.empty();
+
+        this.previousScoreboard = previous;
+        this.ownedScoreboard = lease.scoreboard();
+        this.objective = lease.objective();
+        this.useNormalBackend = lease.active();
+        this.ready = lease.active() || packetSidebar.isSupported();
+        this.removed = false;
+        this.normalObjectiveDisplayed = false;
+    }
+
+    public Scoreboard getScoreboard() {
+        return ownedScoreboard;
+    }
+
+    /**
+     * The objective the client currently scores this sidebar against, or null while no backend is
+     * live. Callers that decorate the sidebar's own outbound packets match on this name.
+     */
+    public String objectiveName() {
+        if (useNormalBackend) {
+            return objective == null ? null : objective.getName();
+        }
+        return packetSidebar.isSupported() ? packetSidebar.objectiveName() : null;
+    }
+
+    /** The score entry name this sidebar uses for a zero-based line, or null when out of range. */
+    public static String entryForLine(int line) {
+        return line < 0 || line >= MAX_LINES ? null : CACHED_ENTRIES[line];
+    }
+
+    public void setBoardSettings(BoardSettings boardSettings) {
+        this.boardSettings = boardSettings;
+    }
+
+    public void remove() {
+        if (removed) {
+            return;
+        }
+        removed = true;
+        ready = false;
+        removeNormalObjective();
+        packetSidebar.reset();
+        forgetAppliedState();
+        restorePreviousScoreboard();
+    }
+
+    public void update() {
+        if (!ready) {
+            return;
+        }
+
+        if (!player.isOnline()) {
+            remove();
+            return;
+        }
+
+        if (boardSettings == null) {
+            return;
+        }
+
+        // One array, filled in provider order and truncated to MAX_LINES before any reversal, so
+        // the UP direction still drops the sixteenth line rather than the first.
+        List<String> provided = boardSettings.getBoardProvider().getLines(player);
+        String[] entries = new String[Math.min(provided.size(), MAX_LINES)];
+        int index = 0;
+        for (String line : provided) {
+            if (index == entries.length) {
+                break;
+            }
+            entries[index++] = normalizeLine(line);
+        }
+
+        int[] requestedSlots = boardSettings.getBoardProvider().getLineSlots(player);
+        int[] slots = lineSlots(requestedSlots, entries.length);
+        if (boardSettings.getScoreDirection() == ScoreDirection.UP) {
+            reverse(entries);
+            for (int left = 0, right = slots.length - 1; requestedSlots != null && left < right; left++, right--) {
+                int swap = slots[left];
+                slots[left] = slots[right];
+                slots[right] = swap;
+            }
+        }
+
+        String title = normalizeTitle(boardSettings.getBoardProvider().getTitle(player));
+        boolean hideScores = boardSettings.getBoardProvider().hideScoreNumbers(player);
+        BoardTextFormat textFormat = boardSettings.getBoardProvider().getTextFormat();
+
+        if (useNormalBackend && textFormat != BoardTextFormat.LEGACY) {
+            useNormalBackend = false;
+            removeNormalObjective();
+            restorePreviousScoreboard();
+        }
+
+        if (useNormalBackend) {
+            if (!updateNormal(title, entries, slots, hideScores)) {
+                useNormalBackend = false;
+                removeNormalObjective();
+                boolean switchedToPacket = packetSidebar.isSupported()
+                        && packetSidebar.render(title, entries, slots, boardSettings.getScoreDirection(), hideScores, textFormat);
+                if (!switchedToPacket && !packetSidebar.isSupported()) {
+                    ready = false;
+                }
+            }
+            return;
+        }
+
+        if (!packetSidebar.render(title, entries, slots, boardSettings.getScoreDirection(), hideScores, textFormat)
+                && !packetSidebar.isSupported()) {
+            ready = false;
+        }
+    }
+
+    static int[] lineSlots(int[] requested, int count) {
+        int[] slots = new int[count];
+        int used = 0;
+        if (requested != null && requested.length < count) {
+            throw new IllegalArgumentException("Sidebar row slots must cover every rendered row");
+        }
+        for (int index = 0; index < count; index++) {
+            int slot = requested == null ? index : requested[index];
+            if (slot < 0 || slot >= MAX_LINES || (used & 1 << slot) != 0) {
+                throw new IllegalArgumentException("Sidebar row slots must be unique within 0..14");
+            }
+            slots[index] = slot;
+            used |= 1 << slot;
+        }
+        return slots;
+    }
+
+    private static int slotMask(int[] slots) {
+        int mask = 0;
+        for (int slot : slots) {
+            mask |= 1 << slot;
+        }
+        return mask;
+    }
+
+    private boolean updateNormal(String title, String[] entries, int[] slots, boolean hideScores) {
+        if (objective == null) {
+            return false;
+        }
+
+        Scoreboard scoreboard = getScoreboard();
+        if (scoreboard == null) {
+            return false;
+        }
+
+        boolean scoreUp = boardSettings.getScoreDirection() == ScoreDirection.UP;
+        boolean effectiveHideScores = effectiveHideScoreNumbers(hideScores, NUMBER_FORMATS.isSupported());
+
+        try {
+            if (!Objects.equals(appliedHideScores, effectiveHideScores)) {
+                NUMBER_FORMATS.apply(objective, effectiveHideScores);
+                appliedHideScores = effectiveHideScores;
+            }
+            if (!title.equals(appliedTitle)) {
+                objective.setDisplayName(title);
+                appliedTitle = title;
+            }
+
+            int activeSlots = slotMask(slots);
+            for (int slot = 0; slot < MAX_LINES; slot++) {
+                if ((appliedSlots & 1 << slot) != 0 && (activeSlots & 1 << slot) == 0) {
+                    scoreboard.resetScores(CACHED_ENTRIES[slot]);
+                    appliedScores[slot] = UNSET_SCORE;
+                }
+            }
+
+            for (int i = 0; i < entries.length; i++) {
+                String line = entries[i];
+                int slot = slots[i];
+                Team team = scoreboard.getTeam(CACHED_ENTRIES[slot]);
+
+                if (team == null) {
+                    team = scoreboard.registerNewTeam(CACHED_ENTRIES[slot]);
+                    team.addEntry(team.getName());
+                    appliedLines[slot] = null;
+                }
+
+                if (!line.equals(appliedLines[slot])) {
+                    BoardEntry entry = BoardEntry.translateToEntry(line);
+                    team.setPrefix(entry.getPrefix());
+                    team.setSuffix(entry.getSuffix());
+                    appliedLines[slot] = line;
+                }
+
+                int score = scoreUp ? 1 + i : MAX_LINES - i;
+                if (appliedScores[slot] != score) {
+                    objective.getScore(team.getName()).setScore(score);
+                    appliedScores[slot] = score;
+                }
+            }
+
+            appliedSlots = activeSlots;
+            if (!normalObjectiveDisplayed) {
+                objective.setDisplaySlot(DisplaySlot.SIDEBAR);
+                normalObjectiveDisplayed = true;
+            }
+            return true;
+        } catch (UnsupportedOperationException ignored) {
+            forgetAppliedState();
+            return false;
+        }
+    }
+
+    /** Drops every last-applied cache so the next render re-sends the full board. */
+    private void forgetAppliedState() {
+        appliedTitle = null;
+        appliedHideScores = null;
+        appliedSlots = 0;
+        Arrays.fill(appliedLines, null);
+        Arrays.fill(appliedScores, UNSET_SCORE);
+    }
+
+    private static String normalizeTitle(String value) {
+        return BoardEntry.normalizeSingleLine(translateColors(value));
+    }
+
+    private static String normalizeLine(String value) {
+        return BoardEntry.normalizeSingleLine(translateColors(value));
+    }
+
+    private static String translateColors(String value) {
+        if (value == null || value.indexOf('&') < 0) {
+            return value == null ? "" : value;
+        }
+        return ChatColor.translateAlternateColorCodes('&', value);
+    }
+
+    private static void reverse(String[] values) {
+        for (int head = 0, tail = values.length - 1; head < tail; head++, tail--) {
+            String swap = values[head];
+            values[head] = values[tail];
+            values[tail] = swap;
+        }
+    }
+
+    static boolean effectiveHideScoreNumbers(boolean requested, boolean supported) {
+        return requested && supported;
+    }
+
+    /**
+     * The display-objective packet reaches the client on the first render, when the objective
+     * instance was rebuilt, when the sidebar is reclaimed, and otherwise only on a slow heartbeat.
+     * Sending it on every update wastes a packet per player per update; never re-sending it hands
+     * the sidebar permanently to any plugin that takes the display slot without the ownership
+     * metadata protocol (the plain Bukkit scoreboard API, or /scoreboard objectives setdisplay).
+     */
+    static boolean shouldSendDisplayObjective(boolean displayedObjective, boolean objectiveRebuilt,
+                                              long nowNanos, long reassertAtNanos) {
+        return !displayedObjective || objectiveRebuilt || nowNanos - reassertAtNanos >= 0L;
+    }
+
+    /** Next heartbeat deadline, spread per board so a whole fleet does not re-assert on one tick. */
+    static long nextDisplayObjectiveNanos(long nowNanos, String ownershipToken) {
+        return nowNanos + DISPLAY_OBJECTIVE_REASSERT_NANOS
+                + Math.floorMod((long) ownershipToken.hashCode(), DISPLAY_OBJECTIVE_SPREAD_NANOS);
+    }
+
+    public void removeEntry(String id) {
+        if (!useNormalBackend) {
+            return;
+        }
+        Scoreboard scoreboard = this.getScoreboard();
+        if (scoreboard == null) {
+            return;
+        }
+        scoreboard.resetScores(id);
+    }
+
+    public void resetScoreboard() {
+        remove();
+    }
+
+    public boolean ownsScoreboardAssignment() {
+        return ownsScoreboardAssignment(currentScoreboard(), ownedScoreboard, previousScoreboard);
+    }
+
+    private Objective initializeNormalBackend(Scoreboard scoreboard, String initialTitle) {
+        Objective existingObjective = scoreboard.getObjective("board");
+        Objective resolvedObjective = existingObjective == null
+                ? scoreboard.registerNewObjective("board", Criteria.DUMMY, initialTitle)
+                : existingObjective;
+        Team team = scoreboard.getTeam("board");
+        if (team == null) {
+            team = scoreboard.registerNewTeam("board");
+        }
+        team.setAllowFriendlyFire(true);
+        team.setCanSeeFriendlyInvisibles(false);
+        team.setPrefix("");
+        team.setSuffix("");
+        return resolvedObjective;
+    }
+
+    private boolean shouldAttemptNormalBackend() {
+        return boardSettings.getBoardProvider().getTextFormat() == BoardTextFormat.LEGACY
+                && !FoliaScheduler.isFolia(Bukkit.getServer()) && !CANVAS_RUNTIME;
+    }
+
+    private Scoreboard createOwnedScoreboard() {
+        if (Bukkit.getScoreboardManager() == null) {
+            return null;
+        }
+        try {
+            return Bukkit.getScoreboardManager().getNewScoreboard();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private void removeNormalObjective() {
+        removeObjective(objective);
+    }
+
+    private void restorePreviousScoreboard() {
+        if (ownedScoreboard == null || !player.isOnline()) {
+            return;
+        }
+        try {
+            Scoreboard active = currentScoreboard();
+            Scoreboard restore = selectScoreboardToRestore(active, ownedScoreboard, previousScoreboard);
+            if (restore != null && !Objects.equals(active, restore)) {
+                player.setScoreboard(restore);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    static Scoreboard selectScoreboardToRestore(Scoreboard active, Scoreboard owned, Scoreboard previous) {
+        return Objects.equals(active, owned) ? previous : active;
+    }
+
+    static boolean ownsScoreboardAssignment(Scoreboard active, Scoreboard owned, Scoreboard previous) {
+        Scoreboard expected = owned == null ? previous : owned;
+        return active != null && Objects.equals(active, expected);
+    }
+
+    private BoardLease acquireNormalBackend(Scoreboard previous) {
+        Scoreboard candidate = createOwnedScoreboard();
+        if (candidate == null) {
+            return BoardLease.empty();
+        }
+
+        Objective candidateObjective = null;
+        try {
+            String initialTitle = boardSettings == null || boardSettings.getBoardProvider() == null
+                    ? ""
+                    : normalizeTitle(boardSettings.getBoardProvider().getTitle(player));
+            candidateObjective = initializeNormalBackend(candidate, initialTitle);
+            player.setScoreboard(candidate);
+            if (Objects.equals(currentScoreboard(), candidate)) {
+                return new BoardLease(candidate, candidateObjective);
+            }
+        } catch (Throwable ignored) {
+        }
+
+        removeObjective(candidateObjective);
+        restoreCandidateScoreboard(candidate, previous);
+        return BoardLease.empty();
+    }
+
+    private void restoreCandidateScoreboard(Scoreboard candidate, Scoreboard previous) {
+        try {
+            Scoreboard active = currentScoreboard();
+            Scoreboard restore = selectScoreboardToRestore(active, candidate, previous);
+            if (restore != null && !Objects.equals(active, restore)) {
+                player.setScoreboard(restore);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private Scoreboard currentScoreboard() {
+        try {
+            return player.getScoreboard();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static void removeObjective(Objective objective) {
+        if (objective == null) {
+            return;
+        }
+        try {
+            objective.unregister();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean detectCanvasRuntime() {
+        String serverName = "";
+        try {
+            if (Bukkit.getServer() != null && Bukkit.getServer().getName() != null) {
+                serverName = Bukkit.getServer().getName();
+            }
+        } catch (Throwable ignored) {
+            serverName = "";
+        }
+        if (serverName.toLowerCase(Locale.ROOT).contains("canvas")) {
+            return true;
+        }
+
+        ClassLoader loader = Board.class.getClassLoader();
+        try {
+            if (Bukkit.getServer() != null) {
+                loader = Bukkit.getServer().getClass().getClassLoader();
+            }
+        } catch (Throwable ignored) {
+            loader = Board.class.getClassLoader();
+        }
+
+        try {
+            Class.forName("io.canvasmc.canvas.region.WorldRegionizer", false, loader);
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private record BoardLease(Scoreboard scoreboard, Objective objective) {
+        private static BoardLease empty() {
+            return new BoardLease(null, null);
+        }
+
+        private boolean active() {
+            return scoreboard != null && objective != null;
+        }
+    }
+
+    private static final class ScoreNumberFormatBridge {
+        private final Method objectiveNumberFormat;
+        private final Object blankFormat;
+
+        private ScoreNumberFormatBridge() {
+            Method foundObjectiveNumberFormat = null;
+            Object foundBlankFormat = null;
+            try {
+                Class<?> numberFormatClass = Class.forName("io.papermc.paper.scoreboard.numbers.NumberFormat");
+                foundObjectiveNumberFormat = Objective.class.getMethod("numberFormat", numberFormatClass);
+                foundBlankFormat = numberFormatClass.getMethod("blank").invoke(null);
+            } catch (ReflectiveOperationException ignored) {
+                foundObjectiveNumberFormat = null;
+                foundBlankFormat = null;
+            }
+            this.objectiveNumberFormat = foundObjectiveNumberFormat;
+            this.blankFormat = foundBlankFormat;
+        }
+
+        private void apply(Objective objective, boolean hideScores) {
+            if (objectiveNumberFormat == null) {
+                return;
+            }
+            try {
+                objectiveNumberFormat.invoke(objective, new Object[]{hideScores ? blankFormat : null});
+            } catch (ReflectiveOperationException ignored) {
+            }
+        }
+
+        private boolean isSupported() {
+            return objectiveNumberFormat != null && blankFormat != null;
+        }
+    }
+
+    private static final class PacketSidebar {
+        private static final String OWNERSHIP_KEY = "volmlib-board-sidebar-owner-v1";
+        private static final ScoreboardPackets BRIDGE = NativeAdapters.find(ScoreboardPackets.class).orElse(null);
+
+        private final Player player;
+        private final boolean supported;
+        private final ScoreboardHandle scoreboard;
+        private ObjectiveHandle objective;
+        private final String objectiveName;
+        private final String[] teamNames;
+        private final String ownershipToken;
+        private final Plugin ownerPlugin;
+        private final boolean ownershipRegistered;
+        private final String[] appliedLines = new String[MAX_LINES];
+        private final int[] appliedScores = new int[MAX_LINES];
+        private String appliedTitle;
+        private Boolean appliedHideScores;
+        private BoardTextFormat appliedTextFormat;
+        private boolean createdObjective;
+        private boolean displayedObjective;
+        private long reassertDisplayNanos;
+        private int visibleSlots;
+        private long lastFailureLogMillis;
+        private Throwable initializationFailure;
+
+        private PacketSidebar(Player player) {
+            this.player = player;
+            Arrays.fill(this.appliedScores, UNSET_SCORE);
+
+            UUID sidebarId = UUID.randomUUID();
+            String token = createToken(sidebarId);
+            this.objectiveName = clip("ib" + token, 16);
+            this.teamNames = new String[MAX_LINES];
+            for (int i = 0; i < MAX_LINES; i++) {
+                this.teamNames[i] = clip("it" + i + token, 16);
+            }
+
+            boolean setupSupported = BRIDGE != null && BRIDGE.supported();
+            ScoreboardHandle builtScoreboard = null;
+            Throwable setupFailure = null;
+            if (setupSupported) {
+                try {
+                    builtScoreboard = BRIDGE.newScoreboard();
+                } catch (Throwable throwable) {
+                    setupSupported = false;
+                    setupFailure = throwable;
+                }
+            }
+
+            this.supported = setupSupported;
+            this.scoreboard = builtScoreboard;
+            this.objective = null;
+            this.createdObjective = false;
+            this.displayedObjective = false;
+            this.visibleSlots = 0;
+            this.lastFailureLogMillis = 0L;
+            this.initializationFailure = setupFailure;
+            this.ownershipToken = BoardSidebarClaim.create(System.nanoTime(), sidebarId);
+            this.ownerPlugin = this.supported ? findOwnerPlugin() : null;
+            this.ownershipRegistered = this.supported && registerOwnership();
+            if (!this.supported) {
+                logFailure(initializationFailure == null
+                        ? new IllegalStateException("Packet scoreboard bridge initialization failed.")
+                        : initializationFailure, "init");
+            }
+        }
+
+        private boolean isSupported() {
+            return supported;
+        }
+
+        private String objectiveName() {
+            return objectiveName;
+        }
+
+        private boolean render(String title, String[] lines, int[] slots, ScoreDirection direction, boolean hideScores,
+                               BoardTextFormat textFormat) {
+            if (!supported || !player.isOnline()) {
+                return false;
+            }
+            if (!ownsPacketSidebar()) {
+                displayedObjective = false;
+                return true;
+            }
+
+            boolean effectiveHideScores = effectiveHideScoreNumbers(hideScores, BRIDGE.supportsNumberFormats());
+            boolean objectiveRebuilt = false;
+            try {
+                if (appliedTextFormat != textFormat) {
+                    forgetApplied();
+                    appliedTextFormat = textFormat;
+                }
+                if (!createdObjective) {
+                    objective = textFormat == BoardTextFormat.LEGACY
+                            ? BRIDGE.newObjective(scoreboard, objectiveName, title, effectiveHideScores)
+                            : BRIDGE.newObjectiveJson(scoreboard, objectiveName, textFormat.json(title), effectiveHideScores);
+                    BRIDGE.sendObjectivePacket(player, objective, ObjectiveOperation.ADD);
+                    createdObjective = true;
+                    objectiveRebuilt = true;
+                    forgetApplied();
+                    appliedTitle = title;
+                    appliedHideScores = effectiveHideScores;
+                } else if (!title.equals(appliedTitle) || !Objects.equals(appliedHideScores, effectiveHideScores)) {
+                    boolean numberFormatChanged = !Objects.equals(appliedHideScores, effectiveHideScores);
+                    objective = textFormat == BoardTextFormat.LEGACY
+                            ? BRIDGE.newObjective(scoreboard, objectiveName, title, effectiveHideScores)
+                            : BRIDGE.newObjectiveJson(scoreboard, objectiveName, textFormat.json(title), effectiveHideScores);
+                    BRIDGE.sendObjectivePacket(player, objective, ObjectiveOperation.CHANGE);
+                    objectiveRebuilt = true;
+                    appliedTitle = title;
+                    appliedHideScores = effectiveHideScores;
+                    if (numberFormatChanged) {
+                        Arrays.fill(appliedScores, UNSET_SCORE);
+                    }
+                }
+
+                int size = Math.min(lines.length, MAX_LINES);
+                int activeSlots = slotMask(slots);
+                for (int slot = 0; slot < MAX_LINES; slot++) {
+                    if ((visibleSlots & 1 << slot) != 0 && (activeSlots & 1 << slot) == 0) {
+                        BRIDGE.sendResetScorePacket(player, CACHED_ENTRIES[slot], objectiveName);
+                        BRIDGE.sendTeamRemovePacket(player, scoreboard, teamNames[slot]);
+                        appliedLines[slot] = null;
+                        appliedScores[slot] = UNSET_SCORE;
+                    }
+                }
+                for (int i = 0; i < size; i++) {
+                    String line = lines[i];
+                    int slot = slots[i];
+                    String entryKey = CACHED_ENTRIES[slot];
+
+                    if (!line.equals(appliedLines[slot])) {
+                        BoardEntry entry = BoardEntry.translateToEntry(line);
+                        if (textFormat == BoardTextFormat.LEGACY) {
+                            BRIDGE.sendTeamPacket(player, scoreboard, teamNames[slot], entryKey, entry.getPrefix(), entry.getSuffix());
+                        } else {
+                            BRIDGE.sendTeamPacketJson(player, scoreboard, teamNames[slot], entryKey,
+                                    textFormat.json(entry.getPrefix()), textFormat.json(entry.getSuffix()));
+                        }
+                        appliedLines[slot] = line;
+                    }
+
+                    int score = direction == ScoreDirection.UP ? (1 + i) : (MAX_LINES - i);
+                    if (appliedScores[slot] != score) {
+                        BRIDGE.sendScorePacket(player, entryKey, objectiveName, score, effectiveHideScores);
+                        appliedScores[slot] = score;
+                    }
+                }
+
+                visibleSlots = activeSlots;
+                long nowNanos = System.nanoTime();
+                if (shouldSendDisplayObjective(displayedObjective, objectiveRebuilt, nowNanos, reassertDisplayNanos)) {
+                    BRIDGE.sendDisplayObjectivePacket(player, objective);
+                    displayedObjective = true;
+                    reassertDisplayNanos = nextDisplayObjectiveNanos(nowNanos, ownershipToken);
+                }
+                return true;
+            } catch (Throwable throwable) {
+                logFailure(throwable, "render");
+                // A partial send leaves the client in an unknown state: re-send everything next pass.
+                forgetApplied();
+                return false;
+            }
+        }
+
+        private void reset() {
+            if (!supported) {
+                releaseOwnership();
+                return;
+            }
+
+            try {
+                for (int i = 0; i < MAX_LINES; i++) {
+                    if ((visibleSlots & 1 << i) == 0) {
+                        continue;
+                    }
+                    BRIDGE.sendResetScorePacket(player, CACHED_ENTRIES[i], objectiveName);
+                    BRIDGE.sendTeamRemovePacket(player, scoreboard, teamNames[i]);
+                }
+                visibleSlots = 0;
+
+                if (createdObjective) {
+                    BRIDGE.sendObjectivePacket(player, objective, ObjectiveOperation.REMOVE);
+                    createdObjective = false;
+                }
+                displayedObjective = false;
+            } catch (Throwable throwable) {
+                logFailure(throwable, "reset");
+                createdObjective = false;
+                displayedObjective = false;
+                visibleSlots = 0;
+            } finally {
+                forgetApplied();
+                releaseOwnership();
+            }
+        }
+
+        private Plugin findOwnerPlugin() {
+            try {
+                return JavaPlugin.getProvidingPlugin(Board.class);
+            } catch (IllegalArgumentException | IllegalStateException ignored) {
+                return null;
+            }
+        }
+
+        private boolean registerOwnership() {
+            if (ownerPlugin == null) {
+                return false;
+            }
+            try {
+                player.setMetadata(OWNERSHIP_KEY, new FixedMetadataValue(ownerPlugin, ownershipToken));
+                return true;
+            } catch (RuntimeException failure) {
+                logFailure(failure, "ownership registration");
+                return false;
+            }
+        }
+
+        private boolean ownsPacketSidebar() {
+            if (!ownershipRegistered || ownerPlugin == null) {
+                return true;
+            }
+            try {
+                List<BoardSidebarClaim.Value> claims = new ArrayList<>();
+                for (MetadataValue metadata : player.getMetadata(OWNERSHIP_KEY)) {
+                    Plugin plugin = metadata.getOwningPlugin();
+                    claims.add(new BoardSidebarClaim.Value(metadata.asString(), plugin != null && plugin.isEnabled()));
+                }
+                return BoardSidebarClaim.isWinner(ownershipToken, claims);
+            } catch (RuntimeException failure) {
+                logFailure(failure, "ownership check");
+                return true;
+            }
+        }
+
+        private void releaseOwnership() {
+            if (!ownershipRegistered || ownerPlugin == null) {
+                return;
+            }
+            try {
+                for (MetadataValue metadata : player.getMetadata(OWNERSHIP_KEY)) {
+                    if (ownerPlugin.equals(metadata.getOwningPlugin()) && ownershipToken.equals(metadata.asString())) {
+                        player.removeMetadata(OWNERSHIP_KEY, ownerPlugin);
+                        return;
+                    }
+                }
+            } catch (RuntimeException failure) {
+                logFailure(failure, "ownership release");
+            }
+        }
+
+        private void forgetApplied() {
+            appliedTitle = null;
+            appliedHideScores = null;
+            Arrays.fill(appliedLines, null);
+            Arrays.fill(appliedScores, UNSET_SCORE);
+        }
+
+        private void logFailure(Throwable throwable, String phase) {
+            long now = System.currentTimeMillis();
+            if (now - lastFailureLogMillis < 5000L) {
+                return;
+            }
+            lastFailureLogMillis = now;
+            Bukkit.getLogger().log(Level.WARNING, "[VolmLib/Board] Packet sidebar " + phase + " failure for "
+                    + player.getName() + " (" + player.getUniqueId() + ").", throwable);
+        }
+
+        private static String createToken(UUID uuid) {
+            long mixedBits = uuid.getMostSignificantBits() ^ uuid.getLeastSignificantBits();
+            String token = Long.toUnsignedString(mixedBits, 36);
+            if (token.length() > 10) {
+                return token.substring(0, 10);
+            }
+            return token;
+        }
+
+        private static String clip(String value, int maxLength) {
+            if (value.length() <= maxLength) {
+                return value;
+            }
+            return value.substring(0, maxLength);
+        }
+    }
+
+}

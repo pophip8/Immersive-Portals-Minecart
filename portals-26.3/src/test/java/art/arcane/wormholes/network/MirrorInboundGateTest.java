@@ -1,0 +1,116 @@
+package art.arcane.wormholes.network;
+
+import art.arcane.wormholes.access.PortalAdmission;
+import art.arcane.optics.math.Vec3d;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.lang.reflect.Proxy;
+import java.util.UUID;
+
+import org.junit.jupiter.api.Test;
+import org.bukkit.entity.Player;
+import org.bukkit.util.Vector;
+
+import art.arcane.wormholes.portal.ILocalPortal;
+import art.arcane.wormholes.portal.PortalPermissionMode;
+import art.arcane.wormholes.portal.PortalType;
+import art.arcane.wormholes.portal.ProjectionMode;
+import art.arcane.wormholes.portal.RemotePortal;
+import art.arcane.optics.math.Box;
+import art.arcane.wormholes.util.RemoteWorld;
+
+public final class MirrorInboundGateTest {
+    @Test
+    public void networkPreflightRejectsMirrorBeforeTransfer() {
+        assertFalse(TraversalAdmissionPolicy.acceptsInbound(portal(true, true)));
+        assertFalse(TraversalAdmissionPolicy.acceptsInbound(portal(false, false)));
+        assertTrue(TraversalAdmissionPolicy.acceptsInbound(portal(false, true)));
+        assertFalse(TraversalAdmissionPolicy.acceptsInbound(null));
+    }
+
+    @Test
+    public void remotePreflightRejectsDestinationsThatWouldDenyHandoff() {
+        RemotePortal remote = remotePortal(true);
+        assertTrue(remote.acceptsInboundTraversal());
+
+		remote.setMirroredProjectionMode(ProjectionMode.OFF);
+		assertTrue(remote.acceptsInboundTraversal());
+
+        remote.setMirroredMirrorMode(true);
+        assertFalse(remote.acceptsInboundTraversal());
+
+        remote.setMirroredMirrorMode(false);
+        remote.setMirroredIncomingTraversalsEnabled(false);
+        assertFalse(remote.acceptsInboundTraversal());
+        assertFalse(remotePortal(false).acceptsInboundTraversal());
+    }
+
+	@Test
+	public void remotePreflightDefersPlayerPermissionsToTheDestination() {
+		RemotePortal remote = remotePortal(true);
+		remote.setName("Beta Gate");
+		Player allowed = player(false, true);
+		Player denied = player(false, false);
+
+		remote.setMirroredPermissionMode(PortalPermissionMode.WHITELIST);
+		assertTrue(remote.acceptsInboundTraversal(PortalAdmission.bypassesAccess(allowed)));
+		assertTrue(remote.acceptsInboundTraversal(PortalAdmission.bypassesAccess(denied)));
+
+		remote.setMirroredPermissionMode(PortalPermissionMode.BLACKLIST);
+		assertTrue(remote.acceptsInboundTraversal(PortalAdmission.bypassesAccess(allowed)));
+		assertTrue(remote.acceptsInboundTraversal(PortalAdmission.bypassesAccess(denied)));
+	}
+
+	@Test
+	public void operatorsBypassRemoteIncomingDirectionButNotPortalState() {
+		Player operator = player(true, false);
+		RemotePortal remote = remotePortal(true);
+		remote.setMirroredIncomingTraversalsEnabled(false);
+
+		assertTrue(remote.acceptsInboundTraversal(PortalAdmission.bypassesAccess(operator)));
+		assertTrue(TraversalAdmissionPolicy.acceptsInbound(portal(false, false), true));
+		assertFalse(TraversalAdmissionPolicy.acceptsInbound(portal(false, false), false));
+
+		remote.setMirroredMirrorMode(true);
+		assertFalse(remote.acceptsInboundTraversal(PortalAdmission.bypassesAccess(operator)));
+		assertFalse(TraversalAdmissionPolicy.acceptsInbound(portal(true, false), true));
+		assertFalse(remotePortal(false).acceptsInboundTraversal(PortalAdmission.bypassesAccess(operator)));
+	}
+
+    private static ILocalPortal portal(boolean mirror, boolean incoming) {
+        return (ILocalPortal) Proxy.newProxyInstance(
+            ILocalPortal.class.getClassLoader(),
+            new Class<?>[] { ILocalPortal.class },
+            (proxy, method, args) -> switch(method.getName()) {
+                case "isMirrorMode" -> Boolean.valueOf(mirror);
+                case "isIncomingTraversalsEnabled" -> Boolean.valueOf(incoming);
+                case "toString" -> "MirrorInboundGatePortal";
+                case "hashCode" -> Integer.valueOf(System.identityHashCode(proxy));
+                case "equals" -> Boolean.valueOf(proxy == args[0]);
+                default -> throw new UnsupportedOperationException(method.getName());
+            });
+    }
+
+    private static RemotePortal remotePortal(boolean open) {
+        return new RemotePortal(
+            UUID.randomUUID(),
+            new RemoteWorld("beta", "world"),
+            new Vec3d(0.0D, 64.0D, 0.0D),
+            PortalType.GATEWAY,
+            open,
+            new Box(0.0D, 1.0D, 64.0D, 67.0D, 0.0D, 1.0D)
+        );
+    }
+
+	private static Player player(boolean operator, boolean hasPermission) {
+		return (Player) Proxy.newProxyInstance(Player.class.getClassLoader(), new Class<?>[] { Player.class }, (proxy, method, args) -> switch(method.getName()) {
+			case "isOp" -> Boolean.valueOf(operator);
+			case "hasPermission" -> Boolean.valueOf(hasPermission && !"*".equals(args[0]));
+			case "toString" -> "MirrorInboundGatePlayer";
+			case "hashCode" -> Integer.valueOf(System.identityHashCode(proxy));
+			case "equals" -> Boolean.valueOf(proxy == args[0]);
+			default -> throw new UnsupportedOperationException(method.getName());
+		});
+	}
+}

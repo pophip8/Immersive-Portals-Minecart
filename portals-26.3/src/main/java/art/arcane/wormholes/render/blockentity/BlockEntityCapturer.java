@@ -1,0 +1,112 @@
+package art.arcane.wormholes.render.blockentity;
+
+import art.arcane.wormholes.render.BukkitProjectorBlocks;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import com.github.retrooper.packetevents.protocol.nbt.NBTCompound;
+
+import org.bukkit.Chunk;
+import org.bukkit.block.BlockState;
+
+import art.arcane.wormholes.platform.WormholesPlatform;
+import art.arcane.wormholes.render.FidelitySettings;
+import art.arcane.optics.math.CellKeys;
+import art.arcane.optics.fidelity.BlockEntityMaterials;
+import art.arcane.optics.fidelity.BlockEntitySample;
+import art.arcane.optics.fidelity.BlockEntitySanitizer;
+
+/**
+ * Turns a block state into a sanitized {@link BlockEntitySample}: the vanilla snapshot tag when the
+ * platform exposes one, otherwise the tag assembled from the Bukkit API. The path that produced the
+ * last sample is reported through {@link #activePath()} for the admin telemetry line.
+ */
+public final class BlockEntityCapturer {
+    private static final String PATH_SNAPSHOT = "snapshot-nbt";
+    private static final String PATH_BUKKIT = "bukkit-api";
+    private static final String PATH_NONE = "none";
+
+    private static volatile String activePath = PATH_NONE;
+
+    private BlockEntityCapturer() {
+    }
+
+    public static String activePath() {
+        return activePath;
+    }
+
+    public static BlockEntitySample capture(BlockState state) {
+        return capture(state, FidelitySettings.blockEntityTypes, FidelitySettings.blockEntityContainers);
+    }
+
+    public static BlockEntitySample capture(BlockState state, List<String> whitelist, boolean containers) {
+        if (state == null) {
+            return null;
+        }
+        String typeKey = BlockEntityMaterials.typeKey(state.getType().name());
+        if (typeKey == null || !BlockEntityMaterials.allowed(typeKey, whitelist, containers)) {
+            return null;
+        }
+        NBTCompound tag = null;
+        byte[] vanilla = WormholesPlatform.blockEntityNbt(state);
+        if (vanilla != null) {
+            try {
+                tag = BlockEntityNbt.decode(vanilla);
+                activePath = PATH_SNAPSHOT;
+            } catch (IOException | RuntimeException unreadable) {
+                WormholesPlatform.disableSnapshotNbt();
+            }
+        }
+        if (tag == null) {
+            tag = BlockEntityNbtAssembler.assemble(state);
+            if (tag == null) {
+                return null;
+            }
+            activePath = PATH_BUKKIT;
+        }
+        return BlockEntitySanitizer.sanitize(typeKey, tag, new BlockEntitySanitizer.Options<>(whitelist, containers, BukkitBlockEntityTags.INSTANCE));
+    }
+
+    /** Whitelisted block entities of a loaded chunk keyed by world cell, up to {@code maxSamples}; call on the chunk's region thread. */
+    public static Map<Long, BlockEntitySample> captureChunk(Chunk chunk, Limits limits) {
+        Map<Long, BlockEntitySample> samples = new HashMap<Long, BlockEntitySample>(8);
+        if (chunk == null || !FidelitySettings.blockEntities) {
+            return samples;
+        }
+        BlockState[] states;
+        try {
+            states = chunk.getTileEntities();
+        } catch (RuntimeException unavailable) {
+            return samples;
+        }
+        if (states == null) {
+            return samples;
+        }
+        for (BlockState state : states) {
+            if (samples.size() >= limits.maxSamples()) {
+                break;
+            }
+            if (state == null || state.getY() < limits.minY() || state.getY() > limits.maxY()
+                || !BukkitProjectorBlocks.defaults().blockEntityCandidate(state.getType())) {
+                continue;
+            }
+            BlockEntitySample sample = capture(state);
+            if (sample != null) {
+                samples.put(Long.valueOf(CellKeys.pack(state.getX(), state.getY(), state.getZ())), sample);
+            }
+        }
+        return samples;
+    }
+
+    public record Limits(int maxSamples, int minY, int maxY) {
+        public static Limits column(int maxSamples) {
+            return new Limits(maxSamples, Integer.MIN_VALUE, Integer.MAX_VALUE);
+        }
+    }
+}

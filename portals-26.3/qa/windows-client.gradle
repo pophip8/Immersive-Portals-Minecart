@@ -1,0 +1,71 @@
+// Isolated, hidden GPU acceptance tests. This bridge is never included in the release JAR.
+gradle.beforeProject { Project project ->
+    if (project.name != 'wormholes-fabric') { return }
+    project.afterEvaluate { Project fabric ->
+    File repository = new File(fabric.projectDir, '../..').canonicalFile
+    String runTag = fabric.providers.gradleProperty('kbRunTag').getOrElse('stable-sodium')
+    File runRoot = new File(repository, '.qa/windows-client-' + runTag)
+    File testResources = new File(repository, 'qa/test-resources')
+    fabric.tasks.register('kbPrepareClient') {
+        doLast {
+            runRoot.mkdirs()
+            new File(runRoot, 'options.txt').setText('soundCategory_master:0.0\n', 'UTF-8')
+            if (fabric.providers.gradleProperty('kbShader').isPresent()) {
+                File shader = new File(fabric.providers.gradleProperty('kbShader').get()).canonicalFile
+                if (!shader.isFile()) { throw new GradleException('Shaderpack absent : ' + shader) }
+                fabric.copy { from(shader); into(new File(runRoot, 'shaderpacks')) }
+                File config = new File(runRoot, 'config')
+                config.mkdirs()
+                new File(config, 'iris.properties').setText('enableShaders=true\nshaderPack=' + shader.name + '\n', 'UTF-8')
+            }
+        }
+    }
+    fabric.tasks.named('runClientGameTest').configure { dependsOn('kbPrepareClient') }
+    fabric.sourceSets.create('kbBridge') {
+        java.srcDir(new File(repository, 'src/test/client/java'))
+        resources.srcDir(new File(repository, 'src/test/client/resources'))
+        compileClasspath += fabric.sourceSets.main.compileClasspath
+    }
+    fabric.tasks.named('compileKbBridgeJava').configure {
+        options.compilerArgs.add('-proc:none')
+    }
+    def bridge = fabric.tasks.register('kbBridgeJar', Jar) {
+        archiveFileName.set('InstanceAutomator.jar')
+        destinationDirectory.set(new File(repository, '.qa/bridge'))
+        from(fabric.sourceSets.kbBridge.output)
+    }
+    fabric.dependencies.add('clientGameTestRuntimeOnly', fabric.files(bridge.flatMap { it.archiveFile }).builtBy(bridge))
+    String renderer = fabric.providers.gradleProperty('kbRenderer').getOrElse('sodium')
+    if (renderer == 'sodium') {
+        String coordinate = fabric.ext.minecraftTarget.renderDependencies.fabric.sodium
+        fabric.dependencies.add('clientGameTestRuntimeOnly', coordinate) { transitive = false }
+    }
+    if (fabric.providers.gradleProperty('kbShader').isPresent()) {
+        String coordinate = fabric.ext.minecraftTarget.renderDependencies.fabric.iris
+        fabric.dependencies.add('clientGameTestRuntimeOnly', coordinate) { transitive = false }
+    }
+    fabric.sourceSets.clientGameTest.resources.setSrcDirs([testResources])
+    fabric.tasks.named('processClientGameTestResources').configure {
+        filesMatching('fabric.mod.json') { expand(fabric.ext.minecraftMetadata) }
+    }
+    fabric.extensions.getByName('loom').runs.named('clientGameTest').configure {
+        runDirectory.set(runRoot)
+        programArgs('--width', '1920', '--height', '1080')
+        vmArg('--enable-native-access=ALL-UNNAMED')
+        vmArg('-Xmx4G')
+        systemProperties.put('fabric.client.gametest.testModResourcesPath', testResources.absolutePath)
+        systemProperties.put('automator.hidden', 'true')
+        systemProperties.put('automator.muted', 'true')
+        systemProperties.put('automator.frameWidth', '1920')
+        systemProperties.put('automator.frameHeight', '1080')
+        systemProperties.put('automator.port', '0')
+        systemProperties.put('automator.token', java.util.UUID.randomUUID().toString())
+        systemProperties.put('automator.output', new File(runRoot, 'automator').absolutePath)
+        systemProperties.put('wormholes.test.fabricPhasedShutdown', 'true')
+    }
+    fabric.tasks.matching { it.name == 'deleteGameTestRunDir' }.configureEach { enabled = false }
+    fabric.tasks.matching { it.name == 'acceptGameTestEula' }.configureEach {
+        eulaFile.set(new File(runRoot, 'eula.txt'))
+    }
+    }
+}

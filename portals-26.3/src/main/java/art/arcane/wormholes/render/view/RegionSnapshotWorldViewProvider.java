@@ -1,0 +1,685 @@
+package art.arcane.wormholes.render.view;
+
+import art.arcane.optics.entity.EntityProfile;
+import art.arcane.wormholes.network.view.BukkitProjectedMapData;
+import art.arcane.optics.view.ContentView;
+import art.arcane.volmlib.util.scheduling.FoliaScheduler;
+import art.arcane.wormholes.Wormholes;
+import art.arcane.optics.entity.EntitySnapshot;
+import art.arcane.wormholes.network.view.PacketBlobs;
+import art.arcane.optics.entity.MapSnapshot;
+import art.arcane.wormholes.platform.WormholesPlatform;
+import art.arcane.wormholes.render.FidelitySettings;
+import art.arcane.optics.math.CellKeys;
+import art.arcane.wormholes.render.ProjectionEntityFilter;
+import art.arcane.optics.view.WorldChangeTracker;
+import art.arcane.wormholes.render.blockentity.BlockEntityCapturer;
+import art.arcane.optics.plate.PlateCaptureJob;
+import art.arcane.optics.fidelity.BlockEntitySample;
+
+import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
+import com.github.retrooper.packetevents.protocol.player.Equipment;
+import com.github.retrooper.packetevents.protocol.player.TextureProperty;
+import io.github.retrooper.packetevents.util.SpigotReflectionUtil;
+import it.unimi.dsi.fastutil.HashCommon;
+
+import org.bukkit.Chunk;
+import org.bukkit.ChunkSnapshot;
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.World;
+import org.bukkit.block.BlockFace;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Hanging;
+import org.bukkit.entity.ItemFrame;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
+import org.bukkit.inventory.meta.MapMeta;
+import org.bukkit.map.MapView;
+import org.bukkit.plugin.Plugin;
+import org.bukkit.util.Vector;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
+import java.util.logging.Level;
+import art.arcane.optics.light.SkyMath;
+
+public final class RegionSnapshotWorldViewProvider implements ProjectionWorldViewProvider {
+    private static final long REFRESH_INTERVAL_MILLIS = 250L;
+    private static final long BLOCK_SNAPSHOT_BACKSTOP_MILLIS = 60_000L;
+    private static final int MAX_CHUNKS_PER_WORLD = 256;
+    private static final int MAX_ENTITIES_PER_CHUNK = 128;
+    private static final long ENTITY_STATE_REFRESH_MILLIS = 500L;
+    private static final long BLOCK_ENTITY_REFRESH_MILLIS = 2_000L;
+
+    private final Plugin plugin;
+    private final LongSupplier clock;
+    private final Map<World, SnapshotWorldView> views;
+    private volatile boolean closed;
+
+    public RegionSnapshotWorldViewProvider(Plugin plugin) {
+        this(plugin, System::currentTimeMillis);
+    }
+
+    RegionSnapshotWorldViewProvider(Plugin plugin, LongSupplier clock) {
+        this.plugin = plugin;
+        this.clock = Objects.requireNonNull(clock);
+        this.views = new ConcurrentHashMap<World, SnapshotWorldView>();
+        this.closed = false;
+    }
+
+    @Override
+    public ProjectionWorldView view(World world) {
+        if (closed || world == null) {
+            return null;
+        }
+        return views.computeIfAbsent(world, key -> new SnapshotWorldView(key));
+    }
+
+    @Override
+    public boolean usesRegionSnapshots() {
+        return true;
+    }
+
+    @Override
+    public void close() {
+        closed = true;
+        views.clear();
+    }
+
+    private void capture(SnapshotWorldView view, int chunkX, int chunkZ, long key) {
+        if (closed) {
+            view.finishCapture(key);
+            return;
+        }
+        World world = view.world;
+        try {
+            if (!world.isChunkLoaded(chunkX, chunkZ)) {
+                WormholesPlatform.loadChunk(plugin, world, chunkX, chunkZ).whenComplete((chunk, error) -> {
+                    if (error != null) {
+                        view.finishCapture(key);
+                        plugin.getLogger().log(Level.WARNING, "Projection snapshot chunk load failed at " + chunkX + "," + chunkZ, error);
+                        return;
+                    }
+                    boolean scheduled = FoliaScheduler.runRegion(plugin, world, chunkX, chunkZ,
+                        () -> captureLoaded(view, chunkX, chunkZ, key));
+                    if (!scheduled) {
+                        view.finishCapture(key);
+                    }
+                });
+                return;
+            }
+            captureLoaded(view, chunkX, chunkZ, key);
+        } catch (Throwable ex) {
+            view.finishCapture(key);
+            plugin.getLogger().log(Level.WARNING, "Projection snapshot capture failed at " + chunkX + "," + chunkZ, ex);
+        }
+    }
+
+    private void captureLoaded(SnapshotWorldView view, int chunkX, int chunkZ, long key) {
+        if (closed) {
+            view.finishCapture(key);
+            return;
+        }
+        World world = view.world;
+        try {
+            if (!world.isChunkLoaded(chunkX, chunkZ)) {
+                view.finishCapture(key);
+                return;
+            }
+            Chunk chunk = world.getChunkAt(chunkX, chunkZ);
+            long now = clock.getAsLong();
+            WorldChangeTracker tracker = Wormholes.projectionChangeTracker;
+            long trackerVersion = tracker == null ? Long.MIN_VALUE : tracker.currentVersion();
+            CapturedChunk current = view.captured(key);
+            boolean refreshBlocks = requiresBlockSnapshotRefresh(tracker, world.getUID(), chunkX, chunkZ,
+                current != null, current == null ? Long.MIN_VALUE : current.trackerVersion,
+                current == null ? Long.MIN_VALUE : current.snapshotCapturedAtMillis, now);
+            ChunkSnapshot snapshot = refreshBlocks
+                ? WormholesPlatform.chunkSnapshot(chunk, false, true, false, true)
+                : current.snapshot;
+            List<CapturedEntity> entities = captureEntities(view, chunk, key, now);
+            boolean refreshBlockEntities = FidelitySettings.blockEntities
+                && (refreshBlocks || current == null || now - current.blockEntitiesCapturedAtMillis >= BLOCK_ENTITY_REFRESH_MILLIS);
+            Map<Long, BlockEntitySample> blockEntities = refreshBlockEntities
+                ? BlockEntityCapturer.captureChunk(chunk, BlockEntityCapturer.Limits.column(PlateCaptureJob.MAX_BLOCK_ENTITIES_PER_CHUNK))
+                : current.blockEntities;
+            int minHeight = current == null ? world.getMinHeight() : current.minHeight;
+            int maxHeight = current == null ? world.getMaxHeight() : current.maxHeight;
+            CapturedChunk captured = new CapturedChunk(snapshot, minHeight, maxHeight,
+                SkyMath.computeSkyDarken(world.getTime(), world.hasStorm(), world.isThundering()), now, entities,
+                chunkX, chunkZ, trackerVersion, refreshBlocks ? now : current.snapshotCapturedAtMillis,
+                blockEntities, refreshBlockEntities ? now : current.blockEntitiesCapturedAtMillis);
+            view.publish(key, captured);
+        } catch (Throwable ex) {
+            view.finishCapture(key);
+            plugin.getLogger().log(Level.WARNING, "Projection snapshot capture failed at " + chunkX + "," + chunkZ, ex);
+        }
+    }
+
+    private List<CapturedEntity> captureEntities(SnapshotWorldView view, Chunk chunk, long chunkKey, long capturedAtMillis) {
+        Entity[] source = chunk.getEntities();
+        int limit = Math.min(source.length, MAX_ENTITIES_PER_CHUNK);
+        List<CapturedEntity> captured = new ArrayList<CapturedEntity>(limit);
+        for (int i = 0; i < source.length && captured.size() < limit; i++) {
+            Entity entity = source[i];
+            if (!ProjectionEntityFilter.canCapture(entity)) {
+                continue;
+            }
+            captured.add(captureEntity(view, entity, chunkKey, capturedAtMillis));
+        }
+        return List.copyOf(captured);
+    }
+
+    private CapturedEntity captureEntity(SnapshotWorldView view, Entity entity, long chunkKey, long capturedAtMillis) {
+        EntityState previousState = view.entityStates.get(entity.getUniqueId());
+        CapturedEntity previous = previousState == null ? null : previousState.entity;
+        long metadataRevision = PacketBlobs.metadataRevision(entity);
+        boolean reuseState = previous != null
+            && previous.metadataRevision == metadataRevision
+            && capturedAtMillis - previous.stateCapturedAtMillis < ENTITY_STATE_REFRESH_MILLIS;
+        Location location = entity.getLocation();
+        Vector look = entityLook(entity, location);
+        Vector velocity = entity.getVelocity();
+        String playerName = "";
+        String textureValue = "";
+        String textureSignature = "";
+        if (entity instanceof Player player) {
+            playerName = player.getName();
+            if (reuseState && previous.profile != null) {
+                textureValue = previous.profile.textureValue();
+                textureSignature = previous.profile.textureSignature();
+            } else {
+                String[] textures = playerTextures(player);
+                textureValue = textures[0];
+                textureSignature = textures[1];
+            }
+        }
+        Entity vehicle = entity.getVehicle();
+        UUID passengerOf = vehicle == null ? null : vehicle.getUniqueId();
+        UUID leashHolder = null;
+        if (entity instanceof LivingEntity living && living.isLeashed()) {
+            try {
+                Entity holder = living.getLeashHolder();
+                leashHolder = holder == null ? null : holder.getUniqueId();
+            } catch (IllegalStateException ignored) {
+                leashHolder = null;
+            }
+        }
+        byte[] metadataBlob = reuseState ? previous.visual.metadata() : PacketBlobs.captureMetadata(entity);
+        byte[] equipmentBlob = reuseState ? previous.visual.equipment() : PacketBlobs.captureEquipment(entity);
+        byte[] mapData = reuseState ? previous.visual.mapData() : captureMapData(entity);
+        List<EntityData<?>> metadata = reuseState ? previous.metadata : List.copyOf(PacketBlobs.readMetadata(metadataBlob));
+        List<Equipment> equipment = reuseState ? previous.equipment : List.copyOf(PacketBlobs.readEquipment(equipmentBlob));
+        EntitySnapshot visual = EntitySnapshot.full(entity.getUniqueId(), entity.getType().getKey().toString(),
+            location.getX(), location.getY(), location.getZ(), entity.getHeight(),
+            look.getX(), look.getY(), look.getZ(), entity instanceof LivingEntity living ? WormholesPlatform.bodyYaw(living, location.getYaw()) : location.getYaw(), location.getPitch(),
+            velocity.getX(), velocity.getY(), velocity.getZ(), entity.isOnGround(),
+            playerName, textureValue, textureSignature, passengerOf, leashHolder,
+            metadataBlob, equipmentBlob, mapData, 0);
+        MapView mapView = mapView(entity);
+        EntityProfile profile = entity instanceof Player
+            ? new EntityProfile(playerName, textureValue, textureSignature)
+            : null;
+        return new CapturedEntity(chunkKey, visual, profile, metadata, equipment, mapView,
+            entity.isVisibleByDefault(), capturedAtMillis,
+            reuseState ? previous.stateCapturedAtMillis : capturedAtMillis, metadataRevision);
+    }
+
+    private static String[] playerTextures(Player player) {
+        for (TextureProperty property : SpigotReflectionUtil.getUserProfile(player)) {
+            if ("textures".equals(property.getName())) {
+                return new String[] {property.getValue(), property.getSignature() == null ? "" : property.getSignature()};
+            }
+        }
+        return new String[] {"", ""};
+    }
+
+    private static Vector entityLook(Entity entity, Location location) {
+        if (entity instanceof LivingEntity living) {
+            return living.getEyeLocation().getDirection();
+        }
+        if (entity instanceof Hanging hanging) {
+            BlockFace facing = hanging.getFacing();
+            return new Vector(facing.getModX(), facing.getModY(), facing.getModZ());
+        }
+        return location.getDirection();
+    }
+
+    private final class SnapshotWorldView implements ProjectionWorldView, ProjectionEntityView {
+        private final World world;
+        private final BlockData sharedAir;
+        private final Map<Long, CapturedChunk> chunks;
+        private final Map<UUID, EntityState> entityStates;
+        private final Set<Long> capturesInFlight;
+        private final AtomicLong revision;
+        private final AtomicInteger entityVersion;
+        private volatile int minHeight;
+        private volatile int maxHeight;
+        private volatile int skyDarken;
+
+        private SnapshotWorldView(World world) {
+            this.world = world;
+            this.sharedAir = Material.AIR.createBlockData();
+            this.chunks = new ConcurrentHashMap<Long, CapturedChunk>();
+            this.entityStates = new ConcurrentHashMap<UUID, EntityState>();
+            this.capturesInFlight = ConcurrentHashMap.newKeySet();
+            this.revision = new AtomicLong();
+            this.entityVersion = new AtomicInteger();
+            this.minHeight = 0;
+            this.maxHeight = 0;
+            this.skyDarken = 0;
+        }
+
+        @Override
+        public World getWorld() {
+            return world;
+        }
+
+        @Override
+        public int getMinHeight() {
+            return minHeight;
+        }
+
+        @Override
+        public int getMaxHeight() {
+            return maxHeight;
+        }
+
+        @Override
+        public BlockData sampleBlockData(int x, int y, int z) {
+            CapturedChunk chunk = capturedChunk(x, z);
+            if (chunk == null || y < chunk.minHeight || y >= chunk.maxHeight) {
+                return null;
+            }
+            Material material = chunk.snapshot.getBlockType(x & 15, y, z & 15);
+            if (ProjectionWorldView.isAir(material)) {
+                return sharedAir;
+            }
+            return chunk.snapshot.getBlockData(x & 15, y, z & 15);
+        }
+
+        @Override
+        public Material material(int x, int y, int z) {
+            CapturedChunk chunk = capturedChunk(x, z);
+            if (chunk == null || y < chunk.minHeight || y >= chunk.maxHeight) {
+                return null;
+            }
+            return chunk.snapshot.getBlockType(x & 15, y, z & 15);
+        }
+
+        @Override
+        public BlockEntitySample sampleBlockEntity(int x, int y, int z) {
+            CapturedChunk chunk = capturedChunk(x, z);
+            if (chunk == null || chunk.blockEntities.isEmpty()) {
+                return null;
+            }
+            return chunk.blockEntities.get(Long.valueOf(CellKeys.pack(x, y, z)));
+        }
+
+        @Override
+        public String sampleBiome(int x, int y, int z) {
+            CapturedChunk chunk = capturedChunk(x, z);
+            if (chunk == null || y < chunk.minHeight || y >= chunk.maxHeight) {
+                return null;
+            }
+            return WormholesPlatform.keyString(chunk.snapshot.getBiome(x & 15, y, z & 15).getKey());
+        }
+
+        @Override
+        public int getLight(int x, int y, int z) {
+            CapturedChunk chunk = capturedChunk(x, z);
+            if (chunk == null || y < chunk.minHeight || y >= chunk.maxHeight) {
+                return LIGHT_UNAVAILABLE;
+            }
+            return ContentView.packLight(chunk.snapshot.getBlockSkyLight(x & 15, y, z & 15),
+                chunk.snapshot.getBlockEmittedLight(x & 15, y, z & 15));
+        }
+
+        @Override
+        public int getSkyDarken() {
+            return skyDarken;
+        }
+
+        @Override
+        public long getRevision() {
+            return revision.get();
+        }
+
+        @Override
+        public boolean isChunkReady(int x, int z) {
+            long key = chunkLookupKey(x >> 4, z >> 4);
+            CapturedChunk chunk = chunks.get(key);
+            if (chunk != null && isDirty(chunk)) {
+                requestCapture(x >> 4, z >> 4, key);
+                return false;
+            }
+            requestIfStale(x >> 4, z >> 4, key, chunk);
+            return chunk != null;
+        }
+
+        @Override
+        public void requestChunk(int x, int z) {
+            int chunkX = x >> 4;
+            int chunkZ = z >> 4;
+            long key = chunkLookupKey(chunkX, chunkZ);
+            requestIfStale(chunkX, chunkZ, key, chunks.get(key));
+        }
+
+        @Override
+        public List<EntitySnapshot> getEntities(double centerX, double centerY, double centerZ, double range) {
+            int minChunkX = ((int) Math.floor(centerX - range)) >> 4;
+            int maxChunkX = ((int) Math.floor(centerX + range)) >> 4;
+            int minChunkZ = ((int) Math.floor(centerZ - range)) >> 4;
+            int maxChunkZ = ((int) Math.floor(centerZ + range)) >> 4;
+            List<EntitySnapshot> result = new ArrayList<EntitySnapshot>();
+            Set<UUID> seen = new HashSet<UUID>();
+            for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+                for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+                    long key = chunkLookupKey(chunkX, chunkZ);
+                    CapturedChunk chunk = chunks.get(key);
+                    requestIfStale(chunkX, chunkZ, key, chunk);
+                    if (chunk == null) {
+                        continue;
+                    }
+                    for (CapturedEntity entity : chunk.entities) {
+                        EntityState state = entityStates.get(entity.visual.id());
+                        EntitySnapshot visual = state == null ? entity.visual : state.entity.visual;
+                        if (!seen.add(visual.id())) {
+                            continue;
+                        }
+                        if (Math.abs(visual.x() - centerX) > range
+                            || Math.abs(visual.y() - centerY) > range
+                            || Math.abs(visual.z() - centerZ) > range) {
+                            continue;
+                        }
+                        result.add(visual);
+                    }
+                }
+            }
+            return result;
+        }
+
+        @Override
+        public boolean isVisibleTo(Player observer, UUID entityId) {
+            EntityState state = entityStates.get(entityId);
+            return state != null && WormholesPlatform.isEntityVisible(observer, entityId,
+                state.entity.visibleByDefault, plugin);
+        }
+
+        @Override
+        public EntityProfile getProfile(UUID entityId) {
+            EntityState state = entityStates.get(entityId);
+            return state == null ? null : state.entity.profile;
+        }
+
+        @Override
+        public List<EntityData<?>> getMetadata(UUID entityId) {
+            EntityState state = entityStates.get(entityId);
+            return state == null ? null : state.entity.metadata;
+        }
+
+        @Override
+        public List<Equipment> getEquipment(UUID entityId) {
+            EntityState state = entityStates.get(entityId);
+            return state == null ? null : state.entity.equipment;
+        }
+
+        @Override
+        public MapView getMapView(UUID entityId) {
+            EntityState state = entityStates.get(entityId);
+            return state == null ? null : state.entity.mapView;
+        }
+
+        @Override
+        public int getStateVersion(UUID entityId) {
+            EntityState state = entityStates.get(entityId);
+            return state == null ? 0 : state.version;
+        }
+
+        private CapturedChunk capturedChunk(int x, int z) {
+            int chunkX = x >> 4;
+            int chunkZ = z >> 4;
+            long key = chunkLookupKey(chunkX, chunkZ);
+            CapturedChunk chunk = chunks.get(key);
+            if (chunk != null && isDirty(chunk)) {
+                requestCapture(chunkX, chunkZ, key);
+                return null;
+            }
+            requestIfStale(chunkX, chunkZ, key, chunk);
+            return chunk;
+        }
+
+        private CapturedChunk captured(long key) {
+            return chunks.get(Long.valueOf(key));
+        }
+
+        private void requestIfStale(int chunkX, int chunkZ, long key, CapturedChunk current) {
+            long now = clock.getAsLong();
+            if (current != null && now - current.capturedAtMillis < REFRESH_INTERVAL_MILLIS) {
+                return;
+            }
+            requestCapture(chunkX, chunkZ, key);
+        }
+
+        private void requestCapture(int chunkX, int chunkZ, long key) {
+            if (!capturesInFlight.add(Long.valueOf(key))) {
+                return;
+            }
+            boolean scheduled = FoliaScheduler.runRegion(plugin, world, chunkX, chunkZ,
+                () -> capture(this, chunkX, chunkZ, key));
+            if (!scheduled) {
+                finishCapture(key);
+            }
+        }
+
+        private boolean isDirty(CapturedChunk chunk) {
+            return isChunkDirty(Wormholes.projectionChangeTracker, world.getUID(), chunk.chunkX, chunk.chunkZ,
+                chunk.trackerVersion);
+        }
+
+        private void publish(long key, CapturedChunk captured) {
+            CapturedChunk previous = chunks.put(Long.valueOf(key), captured);
+            minHeight = captured.minHeight;
+            maxHeight = captured.maxHeight;
+            skyDarken = captured.skyDarken;
+            for (CapturedEntity entity : captured.entities) {
+                entityStates.compute(entity.visual.id(), (id, prior) -> {
+                    if (prior != null && prior.capturedAtMillis > entity.capturedAtMillis) {
+                        return prior;
+                    }
+                    int version = prior != null && sameEntityState(prior.entity.visual, prior.entity.profile,
+                        entity.visual, entity.profile)
+                        ? prior.version
+                        : entityVersion.incrementAndGet();
+                    return new EntityState(entity, version, entity.capturedAtMillis);
+                });
+            }
+            if (previous != null) {
+                Set<UUID> currentIds = new HashSet<UUID>(captured.entities.size());
+                for (CapturedEntity entity : captured.entities) {
+                    currentIds.add(entity.visual.id());
+                }
+                for (CapturedEntity entity : previous.entities) {
+                    if (currentIds.contains(entity.visual.id())) {
+                        continue;
+                    }
+                    entityStates.computeIfPresent(entity.visual.id(), (id, state) -> state.entity.chunkKey == key ? null : state);
+                }
+            }
+            capturesInFlight.remove(Long.valueOf(key));
+            if (blocksChanged(previous, captured)) {
+                revision.incrementAndGet();
+            }
+            evictOldest();
+        }
+
+        private boolean blocksChanged(CapturedChunk previous, CapturedChunk captured) {
+            return previous == null || previous.snapshot != captured.snapshot
+                || previous.skyDarken != captured.skyDarken
+                || !previous.blockEntities.equals(captured.blockEntities);
+        }
+
+        private void finishCapture(long key) {
+            capturesInFlight.remove(Long.valueOf(key));
+        }
+
+        private void evictOldest() {
+            while (chunks.size() > MAX_CHUNKS_PER_WORLD) {
+                long oldestKey = 0L;
+                long oldestMillis = Long.MAX_VALUE;
+                for (Map.Entry<Long, CapturedChunk> entry : chunks.entrySet()) {
+                    if (entry.getValue().capturedAtMillis < oldestMillis) {
+                        oldestKey = entry.getKey().longValue();
+                        oldestMillis = entry.getValue().capturedAtMillis;
+                    }
+                }
+                CapturedChunk removed = chunks.remove(Long.valueOf(oldestKey));
+                if (removed == null) {
+                    return;
+                }
+                final long evictedKey = oldestKey;
+                for (CapturedEntity entity : removed.entities) {
+                    entityStates.computeIfPresent(entity.visual.id(), (id, state) -> state.entity.chunkKey == evictedKey ? null : state);
+                }
+            }
+        }
+    }
+
+    static long chunkLookupKey(int chunkX, int chunkZ) {
+        return HashCommon.mix(CellKeys.chunkKey(chunkX, chunkZ));
+    }
+
+    static boolean sameEntityState(EntitySnapshot previousVisual,
+                                   EntityProfile previousProfile,
+                                   EntitySnapshot currentVisual,
+                                   EntityProfile currentProfile) {
+        if (previousVisual == null || currentVisual == null) {
+            return false;
+        }
+        return Arrays.equals(previousVisual.metadata(), currentVisual.metadata())
+            && Arrays.equals(previousVisual.equipment(), currentVisual.equipment())
+            && Arrays.equals(previousVisual.mapData(), currentVisual.mapData())
+            && Objects.equals(previousProfile, currentProfile);
+    }
+
+    private static byte[] captureMapData(Entity entity) {
+        if (!(entity instanceof ItemFrame itemFrame)) {
+            return EntitySnapshot.EMPTY;
+        }
+        return BukkitProjectedMapData.capture(itemFrame)
+            .map(MapSnapshot::encode)
+            .orElse(EntitySnapshot.EMPTY);
+    }
+
+    private static MapView mapView(Entity entity) {
+        if (!(entity instanceof ItemFrame itemFrame)
+            || !(itemFrame.getItem().getItemMeta() instanceof MapMeta mapMeta)) {
+            return null;
+        }
+        return mapMeta.getMapView();
+    }
+
+    static boolean isChunkDirty(WorldChangeTracker tracker, UUID worldId, int chunkX, int chunkZ,
+                                long trackerVersion) {
+        return tracker != null && trackerVersion != Long.MIN_VALUE
+            && tracker.dirtySince(worldId, chunkX, chunkZ, chunkX, chunkZ, trackerVersion);
+    }
+
+    static boolean requiresBlockSnapshotRefresh(WorldChangeTracker tracker,
+                                                UUID worldId,
+                                                int chunkX,
+                                                int chunkZ,
+                                                boolean hasSnapshot,
+                                                long trackerVersion,
+                                                long capturedAtMillis,
+                                                long nowMillis) {
+        return !hasSnapshot || tracker == null || trackerVersion == Long.MIN_VALUE
+            || nowMillis - capturedAtMillis >= BLOCK_SNAPSHOT_BACKSTOP_MILLIS
+            || isChunkDirty(tracker, worldId, chunkX, chunkZ, trackerVersion);
+    }
+
+    private static final class CapturedChunk {
+        private final ChunkSnapshot snapshot;
+        private final int minHeight;
+        private final int maxHeight;
+        private final int skyDarken;
+        private final long capturedAtMillis;
+        private final List<CapturedEntity> entities;
+        private final int chunkX;
+        private final int chunkZ;
+        private final long trackerVersion;
+        private final long snapshotCapturedAtMillis;
+        private final Map<Long, BlockEntitySample> blockEntities;
+        private final long blockEntitiesCapturedAtMillis;
+
+        private CapturedChunk(ChunkSnapshot snapshot, int minHeight, int maxHeight, int skyDarken,
+                              long capturedAtMillis, List<CapturedEntity> entities, int chunkX, int chunkZ,
+                              long trackerVersion, long snapshotCapturedAtMillis,
+                              Map<Long, BlockEntitySample> blockEntities, long blockEntitiesCapturedAtMillis) {
+            this.snapshot = snapshot;
+            this.minHeight = minHeight;
+            this.maxHeight = maxHeight;
+            this.skyDarken = skyDarken;
+            this.capturedAtMillis = capturedAtMillis;
+            this.entities = entities;
+            this.chunkX = chunkX;
+            this.chunkZ = chunkZ;
+            this.trackerVersion = trackerVersion;
+            this.snapshotCapturedAtMillis = snapshotCapturedAtMillis;
+            this.blockEntities = blockEntities;
+            this.blockEntitiesCapturedAtMillis = blockEntitiesCapturedAtMillis;
+        }
+    }
+
+    private static final class CapturedEntity {
+        private final long chunkKey;
+        private final EntitySnapshot visual;
+        private final EntityProfile profile;
+        private final List<EntityData<?>> metadata;
+        private final List<Equipment> equipment;
+        private final MapView mapView;
+        private final boolean visibleByDefault;
+        private final long capturedAtMillis;
+        private final long stateCapturedAtMillis;
+        private final long metadataRevision;
+
+        private CapturedEntity(long chunkKey, EntitySnapshot visual, EntityProfile profile,
+                               List<EntityData<?>> metadata, List<Equipment> equipment, MapView mapView,
+                               boolean visibleByDefault, long capturedAtMillis, long stateCapturedAtMillis, long metadataRevision) {
+            this.chunkKey = chunkKey;
+            this.visual = visual;
+            this.profile = profile;
+            this.metadata = metadata;
+            this.equipment = equipment;
+            this.mapView = mapView;
+            this.visibleByDefault = visibleByDefault;
+            this.capturedAtMillis = capturedAtMillis;
+            this.stateCapturedAtMillis = stateCapturedAtMillis;
+            this.metadataRevision = metadataRevision;
+        }
+    }
+
+    private static final class EntityState {
+        private final CapturedEntity entity;
+        private final int version;
+        private final long capturedAtMillis;
+
+        private EntityState(CapturedEntity entity, int version, long capturedAtMillis) {
+            this.entity = entity;
+            this.version = version;
+            this.capturedAtMillis = capturedAtMillis;
+        }
+    }
+}

@@ -1,0 +1,381 @@
+package art.arcane.wormholes.clientgametest;
+
+import art.arcane.wormholes.clientgametest.mixin.ParticleGroupTap;
+import art.arcane.wormholes.modded.MinecraftAccessService;
+import art.arcane.wormholes.modded.MinecraftPortal;
+import art.arcane.wormholes.modded.WormholesModRuntime;
+import art.arcane.wormholes.modded.client.ClientSeamlessTravel;
+import art.arcane.wormholes.modded.client.WormholesClient;
+import art.arcane.wormholes.modded.mixin.client.ParticleEngineAccess;
+import art.arcane.wormholes.portal.PortalType;
+import art.arcane.wormholes.transit.OrientationPolicy;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.particle.Particle;
+import net.minecraft.client.particle.ParticleGroup;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.players.ServerOpListEntry;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Set;
+
+import static art.arcane.wormholes.clientgametest.NativeClientViewAssertions.runtime;
+
+final class SeamlessWalkThrough {
+    static final BlockPos NETHER_FRAME = new BlockPos(0, 70, -40);
+    static final BlockPos FRAME_SOURCE = new BlockPos(0, 70, 60);
+    static final BlockPos FRAME_DESTINATION = new BlockPos(0, 70, 260);
+    private static final Logger LOGGER = LoggerFactory.getLogger("WormholesClientGameTest");
+    private static final int LIGHT_TIMEOUT_TICKS = 600;
+    private static final int LOOK_TICKS = 40;
+    private static final int ARRIVAL_PAUSE_TICKS = 10;
+    private static final int CROSSING_TIMEOUT_TICKS = 160;
+    private static final int PREPARE_TIMEOUT_TICKS = 600;
+    private static final int SETTLED_FRAME = 10;
+    private static final int BASELINE_FRAMES = 40;
+    private static final int SETTLE_TIMEOUT_TICKS = 100;
+    private static final int APPROACH_TIMEOUT_TICKS = 200;
+    private static final int MARKER_LIFETIME_TICKS = 6000;
+    private static final double CROSSING_JUMP = 4.0D;
+    private static final double APPROACH_BLOCKS = 6.5D;
+    private static final double FAR_APPROACH_BLOCKS = 9.0D;
+
+    private SeamlessWalkThrough() {
+    }
+
+    static void netherPortal(SeamlessClient client, SeamlessServer server, String label, int trips) {
+        SeamlessScenario.join(client);
+        SeamlessScenario.assertSeamlessNegotiated(client);
+        server.lightNetherPortal(NETHER_FRAME);
+        client.runOnClient(minecraft -> TravelTap.reset());
+        int waited = 0;
+        while (!server.netherPortalLit(NETHER_FRAME)) {
+            SeamlessScenario.assertTrue(waited++ < LIGHT_TIMEOUT_TICKS, label + ": the lit nether portal was never replaced by a Wormholes portal");
+            client.waitTicks(1);
+        }
+        LOGGER.info("[{}] nether portal replaced {} ticks after lighting", label, waited);
+        List<Vec3> centers = server.netherPortalCenters(NETHER_FRAME);
+        LOGGER.info("[{}] nether portal pair {}", label, centers);
+        client.waitTicks(LOOK_TICKS);
+        List<String> failures = new ArrayList<>();
+        Particle marker = client.computeOnClient(SeamlessWalkThrough::markParticle);
+        for (int trip = 1; trip <= trips; trip++) {
+            face(client, centers.getFirst());
+            walk(client, label + "-" + trip, failures);
+            client.waitTicks(ARRIVAL_PAUSE_TICKS);
+            if (trip == 1 && client.computeOnClient(minecraft -> shown(minecraft, marker))) {
+                failures.add(label + "-" + trip + " kept drawing overworld particles in the nether");
+            }
+            face(client, centers.get(1));
+            walk(client, label + "-" + trip + "-return", failures);
+            client.waitTicks(ARRIVAL_PAUSE_TICKS);
+            if (trip == 1 && !client.computeOnClient(minecraft -> shown(minecraft, marker) && marker.isAlive())) {
+                failures.add(label + "-" + trip + "-return lost the overworld particles at the level swap");
+            }
+        }
+        client.restoreDefaultGameOptions();
+        SeamlessScenario.assertTrue(failures.isEmpty(), label + ": " + failures);
+        LOGGER.info("WORMHOLES_NETHER_WALK_PASS {} trips={} native_ignition conversion walking_roundtrip no_respawn no_correction particles_preserved",
+            label, trips);
+    }
+
+    static void framePortal(SeamlessClient client, SeamlessServer server, String label, int trips) {
+        SeamlessScenario.join(client);
+        SeamlessScenario.assertSeamlessNegotiated(client);
+        SeamlessScenario.Route route = server.build(new SeamlessScenario.RouteSpec(Level.OVERWORLD, FRAME_SOURCE, Level.NETHER, FRAME_DESTINATION,
+            OrientationPolicy.FRAME, false));
+        Vec3 start = new Vec3(FRAME_SOURCE.getX() + 1.5D, FRAME_SOURCE.getY(), FRAME_SOURCE.getZ() + FAR_APPROACH_BLOCKS);
+        server.approachFrom(Level.OVERWORLD, start, 180.0F);
+        client.waitFor(minecraft -> minecraft.player != null && minecraft.player.position().distanceTo(start) < 1.0D, APPROACH_TIMEOUT_TICKS);
+        client.waitForChunksDownload();
+        client.runOnClient(minecraft -> TravelTap.reset());
+        List<String> failures = new ArrayList<>();
+        Vec3 source = Vec3.atLowerCornerOf(FRAME_SOURCE).add(1.5D, 1.5D, 0.5D);
+        Vec3 destination = Vec3.atLowerCornerOf(FRAME_DESTINATION).add(1.5D, 1.5D, 0.5D);
+        for (int trip = 1; trip <= trips; trip++) {
+            face(client, source);
+            walk(client, label + "-" + trip, failures);
+            client.waitTicks(ARRIVAL_PAUSE_TICKS);
+            if (server.chunkEverLoaded(Level.NETHER, FRAME_SOURCE.getX() >> 4, FRAME_SOURCE.getZ() >> 4)) {
+                failures.add(label + "-" + trip + " loaded the nether chunk under the overworld source portal");
+            }
+            face(client, destination);
+            walk(client, label + "-" + trip + "-return", failures);
+            client.waitTicks(ARRIVAL_PAUSE_TICKS);
+            if (server.chunkEverLoaded(Level.OVERWORLD, FRAME_DESTINATION.getX() >> 4, FRAME_DESTINATION.getZ() >> 4)) {
+                failures.add(label + "-" + trip + "-return loaded the overworld chunk under the nether destination portal");
+            }
+        }
+        SeamlessScenario.finish(client, server, route);
+        SeamlessScenario.assertTrue(failures.isEmpty(), label + ": " + failures);
+    }
+
+    static void light(MinecraftServer server, ServerPlayer player, BlockPos min) {
+        light(server, player, new NetherFrameFixture(min, 2));
+    }
+
+    static void light(MinecraftServer server, ServerPlayer player, NetherFrameFixture fixture) {
+        BlockPos min = fixture.minimum();
+        int width = fixture.width();
+        SeamlessScenario.assertTrue(width >= 2 && width <= 21, "invalid native Nether fixture width");
+        ServerLevel level = server.overworld();
+        fill(level, min.offset(-6, -1, -8), 16, 1, 22, Blocks.STONE.defaultBlockState());
+        fill(level, min.offset(-6, 0, -8), 16, 7, 22, Blocks.AIR.defaultBlockState());
+        for (int x = -1; x <= width; x++) {
+            level.setBlockAndUpdate(min.offset(x, -1, 0), Blocks.OBSIDIAN.defaultBlockState());
+            level.setBlockAndUpdate(min.offset(x, 3, 0), Blocks.OBSIDIAN.defaultBlockState());
+        }
+        for (int y = 0; y < 3; y++) {
+            level.setBlockAndUpdate(min.offset(-1, y, 0), Blocks.OBSIDIAN.defaultBlockState());
+            level.setBlockAndUpdate(min.offset(width, y, 0), Blocks.OBSIDIAN.defaultBlockState());
+        }
+        player.teleportTo(level, min.getX() + 1.0D, min.getY(), min.getZ() + APPROACH_BLOCKS, Set.of(), 180.0F, 0.0F, false);
+        player.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.FLINT_AND_STEEL));
+        String prerequisite = netherDetails(server, player, min);
+        LOGGER.info("WORMHOLES_NETHER_IGNITION_READY {}", prerequisite);
+        if (server.isSingleplayer()) {
+            SeamlessScenario.assertTrue(server.isSingleplayerOwner(player.nameAndId()), "nether fixture actor is not the integrated owner: " + prerequisite);
+            SeamlessScenario.assertTrue(server.getWorldData().isAllowCommands(), "nether fixture world does not allow commands: " + prerequisite);
+        }
+        SeamlessScenario.assertTrue(runtime(server).access().permission(player, PortalType.PORTAL.permission()),
+            "nether fixture actor lacks portal conversion permission: " + prerequisite);
+        BlockPos base = min.offset(0, -1, 0);
+        InteractionResult result = player.gameMode.useItemOn(player, level, player.getItemInHand(InteractionHand.MAIN_HAND), InteractionHand.MAIN_HAND,
+            new BlockHitResult(Vec3.atCenterOf(base).add(0.0D, 0.5D, 0.0D), Direction.UP, base, false));
+        String ignited = netherDetails(server, player, min);
+        LOGGER.info("WORMHOLES_NETHER_IGNITION_RESULT result={} {}", result, ignited);
+        SeamlessScenario.assertTrue(result.consumesAction(), "flint and steel was not used on the obsidian frame: " + result + " " + ignited);
+        SeamlessScenario.assertTrue(level.getBlockState(min).is(Blocks.NETHER_PORTAL) || lit(server, min),
+            "flint and steel did not form a native nether portal: " + ignited);
+    }
+
+    static boolean lit(MinecraftServer server, BlockPos min) {
+        WormholesModRuntime runtime = runtime(server);
+        MinecraftPortal portal = runtime.portals().at(server.overworld(), min);
+        boolean replaced = portal != null && portal.isManaged() && portal.getDestinationId() != null;
+        if (!replaced && server.overworld().getGameTime() % 100 == 0) {
+            for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+                LOGGER.info("WORMHOLES_NETHER_CONVERSION_WAIT {}", netherDetails(server, player, min));
+            }
+        }
+        return replaced;
+    }
+
+    private static String netherDetails(MinecraftServer server, ServerPlayer player, BlockPos min) {
+        WormholesModRuntime runtime = runtime(server);
+        ServerLevel level = server.overworld();
+        CommandSourceStack source = player.createCommandSourceStack();
+        ServerOpListEntry entry = server.getPlayerList().getOps().get(player.nameAndId());
+        List<BlockPos> cells = new ArrayList<>(6);
+        List<BlockState> interior = new ArrayList<>(6);
+        for (int x = 0; x < 2; x++) {
+            for (int y = 0; y < 3; y++) {
+                BlockPos cell = min.offset(x, y, 0);
+                cells.add(cell);
+                interior.add(level.getBlockState(cell));
+            }
+        }
+        MinecraftPortal portal = runtime.portals().at(level, min);
+        return "singleplayer=" + server.isSingleplayer() + " owner=" + server.isSingleplayerOwner(player.nameAndId())
+            + " commands=" + server.getWorldData().isAllowCommands() + " op=" + server.getPlayerList().isOp(player.nameAndId())
+            + " storedOpLevel=" + (entry == null ? null : entry.permissions().level())
+            + " profileLevel=" + server.getProfilePermissions(player.nameAndId()).level()
+            + " sourcePermissions=" + source.permissions() + " nativeAdmin=" + Commands.hasPermission(Commands.LEVEL_ADMINS).test(source)
+            + " portalPermission=" + runtime.access().permission(player, PortalType.PORTAL.permission())
+            + " canConstruct=" + runtime.access().canConstruct(player)
+            + " canPlace=" + runtime.access().canPlace(new MinecraftAccessService.Placement(player, level, cells, MinecraftAccessService.PlacementKind.VANILLA))
+            + " actorLevel=" + player.level().dimension().identifier() + " actorPosition=" + player.position()
+            + " hand=" + player.getItemInHand(InteractionHand.MAIN_HAND) + " running=" + runtime.running()
+            + " replace=" + runtime.configuration().settings().getMain().replaceNetherAndEndPortals
+            + " groups=" + runtime.configuration().settings().getDimensional().groups
+            + " scales=" + runtime.configuration().settings().getDimensional().scales
+            + " targetPresent=" + (server.getLevel(Level.NETHER) != null)
+            + " base=" + level.getBlockState(min.below()) + " interior=" + interior
+            + " managed=" + (portal == null ? null : portal.isManaged())
+            + " destination=" + (portal == null ? null : portal.getDestinationId());
+    }
+
+    private static void walk(SeamlessClient client, String label, List<String> failures) {
+        String unprepared = prepare(client);
+        if (unprepared != null) {
+            LOGGER.info("[{}] walking before preparation finished: {}", label, unprepared);
+        }
+        int approach = client.computeOnClient(minecraft -> TravelTap.frames().size());
+        String before = client.computeOnClient(minecraft -> minecraft.level.dimension().identifier().toString());
+        int player = client.computeOnClient(minecraft -> System.identityHashCode(minecraft.player));
+        client.holdForward();
+        int crossing = -1;
+        try {
+            for (int tick = 0; tick < CROSSING_TIMEOUT_TICKS && crossing < 0; tick++) {
+                client.waitTicks(1);
+                crossing = client.computeOnClient(minecraft -> TravelTap.crossingFrame(CROSSING_JUMP, approach));
+            }
+        } finally {
+            client.releaseForward();
+        }
+        if (crossing < 0) {
+            failures.add(label + " never crossed");
+            client.runOnClient(minecraft -> TravelTap.reset());
+            LOGGER.info("[{}] never crossed from {}: player at {} yaw {}, travel {}", label, before,
+                client.computeOnClient(minecraft -> minecraft.player.position()), client.computeOnClient(minecraft -> minecraft.player.getYRot()),
+                client.computeOnClient(SeamlessWalkThrough::travelState));
+            return;
+        }
+        client.waitTicks(ARRIVAL_PAUSE_TICKS);
+        int settled = crossing + SETTLED_FRAME + BASELINE_FRAMES;
+        for (int tick = 0; tick < SETTLE_TIMEOUT_TICKS && client.computeOnClient(minecraft -> TravelTap.frames().size()) < settled; tick++) {
+            client.waitTicks(1);
+        }
+        String after = client.computeOnClient(minecraft -> minecraft.level.dimension().identifier().toString());
+        int respawns = TravelTap.respawnsSince(approach);
+        int positions = TravelTap.positionsSince(approach);
+        boolean loading = TravelTap.loadingScreenShown();
+        boolean replaced = client.computeOnClient(minecraft -> System.identityHashCode(minecraft.player)) != player;
+        String timing = frameTiming(crossing);
+        String approaching = approachTiming(crossing);
+        client.runOnClient(minecraft -> TravelTap.reset());
+        String path = respawns > 0 ? "respawn" : positions > 0 ? "corrected" : "seamless";
+        LOGGER.info("[{}] crossed {} -> {} by {}: respawns {}, positions {}, loading screen {}, player replaced {}, now at {}; {}; {}", label, before,
+            after, path, respawns, positions, loading, replaced, client.computeOnClient(minecraft -> minecraft.player.position()), timing, approaching);
+        if (respawns > 0 || positions > 0 || loading || replaced) {
+            failures.add(label + " " + path);
+        }
+    }
+
+    static List<Vec3> centers(MinecraftServer server, BlockPos frame) {
+        WormholesModRuntime runtime = runtime(server);
+        MinecraftPortal source = runtime.portals().at(server.overworld(), frame);
+        MinecraftPortal destination = runtime.portals().get(source.getDestinationId());
+        return List.of(center(source), center(destination));
+    }
+
+    private static Vec3 center(MinecraftPortal portal) {
+        return new Vec3(portal.getOrigin().x(), portal.getOrigin().y(), portal.getOrigin().z());
+    }
+
+    private static Particle markParticle(Minecraft minecraft) {
+        Vec3 eye = minecraft.player.getEyePosition();
+        Particle particle = minecraft.particleEngine.createParticle(ParticleTypes.END_ROD, eye.x, eye.y + 1.0D, eye.z, 0.0D, 0.0D, 0.0D);
+        SeamlessScenario.assertTrue(particle != null, "the marker particle could not be created");
+        particle.setLifetime(MARKER_LIFETIME_TICKS);
+        return particle;
+    }
+
+    private static boolean shown(Minecraft minecraft, Particle particle) {
+        ParticleEngineAccess engine = (ParticleEngineAccess) minecraft.particleEngine;
+        if (engine.wormholes$pending().contains(particle)) {
+            return true;
+        }
+        for (ParticleGroup<?> group : engine.wormholes$particles().values()) {
+            if (((ParticleGroupTap) group).wormholesTest$particles().contains(particle)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String travelState(Minecraft minecraft) {
+        ClientSeamlessTravel travel = WormholesClient.instance().seamlessTravel();
+        return "armed " + travel.armed() + " pending " + travel.pending() + " level " + minecraft.level.dimension().identifier();
+    }
+
+    private static void face(SeamlessClient client, Vec3 target) {
+        Vec3 feet = client.computeOnClient(minecraft -> minecraft.player.position());
+        client.lookAt((float) Math.toDegrees(Math.atan2(-(target.x - feet.x), target.z - feet.z)), 0.0F);
+        client.waitTicks(1);
+    }
+
+    private static String prepare(SeamlessClient client) {
+        String unprepared = client.computeOnClient(minecraft -> WormholesClient.instance().seamlessTravel().unprepared());
+        for (int tick = 0; tick < PREPARE_TIMEOUT_TICKS && unprepared != null; tick++) {
+            client.waitTicks(1);
+            unprepared = client.computeOnClient(minecraft -> WormholesClient.instance().seamlessTravel().unprepared());
+        }
+        return unprepared;
+    }
+
+    private static String frameTiming(int crossing) {
+        List<TravelTap.Frame> frames = TravelTap.frames();
+        if (crossing < 2 || frames.size() < crossing + SETTLED_FRAME + 2) {
+            return "frame timing unavailable";
+        }
+        long source = median(frames, Math.max(0, crossing - BASELINE_FRAMES), crossing);
+        long destination = median(frames, crossing + SETTLED_FRAME, Math.min(frames.size(), crossing + SETTLED_FRAME + BASELINE_FRAMES));
+        long worst = 0L;
+        int worstFrame = 0;
+        for (int index = crossing - 1; index < Math.min(frames.size(), crossing + SETTLED_FRAME); index++) {
+            if (frames.get(index).tickNanos() > worst) {
+                worst = frames.get(index).tickNanos();
+                worstFrame = index - crossing;
+            }
+        }
+        long baseline = Math.max(source, destination);
+        return String.format("source median %.2f ms, destination median %.2f ms, worst crossing frame %.2f ms at crossing%+d (%.1fx)",
+            source / 1.0E6D, destination / 1.0E6D, worst / 1.0E6D, worstFrame, baseline == 0L ? 0.0D : (double) worst / baseline);
+    }
+
+    private static String approachTiming(int crossing) {
+        List<TravelTap.Frame> frames = TravelTap.frames();
+        int end = Math.min(frames.size(), crossing - 1);
+        if (end < BASELINE_FRAMES) {
+            return "approach timing unavailable";
+        }
+        long median = median(frames, 1, end);
+        long worst = 0L;
+        int worstFrame = 0;
+        int slow = 0;
+        for (int index = 1; index < end; index++) {
+            long nanos = frames.get(index).tickNanos();
+            if (nanos > worst) {
+                worst = nanos;
+                worstFrame = index;
+            }
+            if (median > 0L && nanos > median * 2L) {
+                slow++;
+            }
+        }
+        return String.format("approach %d frames, median %.2f ms, worst %.2f ms at frame %d (%.1fx), %d frames above 2x", end, median / 1.0E6D,
+            worst / 1.0E6D, worstFrame, median == 0L ? 0.0D : (double) worst / median, slow);
+    }
+
+    private static long median(List<TravelTap.Frame> frames, int from, int to) {
+        long[] values = new long[to - from];
+        for (int index = from; index < to; index++) {
+            values[index - from] = frames.get(index).tickNanos();
+        }
+        Arrays.sort(values);
+        return values.length == 0 ? 0L : values[values.length / 2];
+    }
+
+    private static void fill(ServerLevel level, BlockPos min, int sizeX, int sizeY, int sizeZ, BlockState state) {
+        for (int x = 0; x < sizeX; x++) {
+            for (int y = 0; y < sizeY; y++) {
+                for (int z = 0; z < sizeZ; z++) {
+                    level.setBlockAndUpdate(min.offset(x, y, z), state);
+                }
+            }
+        }
+    }
+
+    record NetherFrameFixture(BlockPos minimum, int width) {
+    }
+}

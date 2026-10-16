@@ -1,0 +1,159 @@
+package art.arcane.wormholes.network;
+
+import org.junit.jupiter.api.Test;
+
+import java.io.ByteArrayInputStream;
+import java.io.DataInputStream;
+import java.io.IOException;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class HandshakeCompressionTest {
+    private static byte[] generatePublicKey() throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("Ed25519");
+        KeyPair keyPair = generator.generateKeyPair();
+        return keyPair.getPublic().getEncoded();
+    }
+
+    private static CompressionDictionary trainDictionary() {
+        return trainDictionary(0xDEADBEEFL);
+    }
+
+    private static CompressionDictionary trainDictionary(long seed) {
+        List<byte[]> samples = new ArrayList<>();
+        Random random = new Random(seed);
+        for (int i = 0; i < 256; i++) {
+            byte[] sample = new byte[1024 + random.nextInt(1024)];
+            for (int j = 0; j < sample.length; j++) {
+                sample[j] = (byte) ('a' + random.nextInt(8));
+            }
+            samples.add(sample);
+        }
+        return CompressionDictionary.train(samples, 8 * 1024);
+    }
+
+    private static boolean negotiateUseDict(WireMessage.Hello local, WireMessage.Hello remote) {
+        if (!local.compressionSupported() || !remote.compressionSupported()) {
+            return false;
+        }
+        return CompressionDictionary.sameHash(local.currentDictHash(), remote.currentDictHash())
+            && local.currentDictVersion() == remote.currentDictVersion()
+            && local.currentDictVersion() != 0;
+    }
+
+    @Test
+    void helloCarriesCompressionFlagsAndRoundTrips() throws Exception {
+        CompressionDictionary dictionary = trainDictionary();
+        WireMessage.Hello hello = new WireMessage.Hello(
+            WireCodec.PROTOCOL_VERSION,
+            "26.2",
+            "1.0.0",
+            "alpha",
+            "10.0.0.5",
+            8901, new GameEndpoint("10.0.0.5", 25565), null,
+            Handshake.newNonce(),
+            generatePublicKey(),
+            true,
+            dictionary.hash(),
+            dictionary.version(), WireCapability.localSet());
+        byte[] frame = WireCodec.encodeFrame(hello);
+        WireMessage.Hello decoded = assertInstanceOf(WireMessage.Hello.class, WireCodec.readFrame(new DataInputStream(new ByteArrayInputStream(frame))));
+        assertTrue(decoded.compressionSupported());
+        assertArrayEquals(dictionary.hash(), decoded.currentDictHash());
+        assertEquals(dictionary.version(), decoded.currentDictVersion());
+    }
+
+    @Test
+    void challengeCarriesCompressionFlagsAndRoundTrips() throws Exception {
+        CompressionDictionary dictionary = trainDictionary();
+        WireMessage.Challenge challenge = new WireMessage.Challenge(
+            "beta",
+            "10.0.0.2",
+            8901, new GameEndpoint("10.0.0.2", 25565), null,
+            Handshake.newNonce(),
+            generatePublicKey(),
+            new byte[]{1, 2, 3, 4},
+            true,
+            dictionary.hash(),
+            dictionary.version(), WireCapability.localSet());
+        byte[] frame = WireCodec.encodeFrame(challenge);
+        WireMessage.Challenge decoded = assertInstanceOf(WireMessage.Challenge.class, WireCodec.readFrame(new DataInputStream(new ByteArrayInputStream(frame))));
+        assertTrue(decoded.compressionSupported());
+        assertArrayEquals(dictionary.hash(), decoded.currentDictHash());
+        assertEquals(dictionary.version(), decoded.currentDictVersion());
+    }
+
+    @Test
+    void matchingDictHashAndVersionEnablesDictMode() throws Exception {
+        CompressionDictionary dictionary = trainDictionary();
+        WireMessage.Hello local = new WireMessage.Hello(
+            WireCodec.PROTOCOL_VERSION, "26.2", "1.0.0", "alpha", "10.0.0.1", 8901, new GameEndpoint("10.0.0.1", 25565), null,
+            Handshake.newNonce(), generatePublicKey(), true, dictionary.hash(), dictionary.version(), WireCapability.localSet());
+        WireMessage.Hello remote = new WireMessage.Hello(
+            WireCodec.PROTOCOL_VERSION, "26.2", "1.0.0", "beta", "10.0.0.2", 8901, new GameEndpoint("10.0.0.2", 25565), null,
+            Handshake.newNonce(), generatePublicKey(), true, dictionary.hash(), dictionary.version(), WireCapability.localSet());
+        assertTrue(negotiateUseDict(local, remote));
+    }
+
+    @Test
+    void mismatchedHashFallsBackToDictless() throws Exception {
+        byte[] alphaHash = new byte[CompressionDictionary.HASH_LENGTH];
+        byte[] betaHash = new byte[CompressionDictionary.HASH_LENGTH];
+        for (int i = 0; i < alphaHash.length; i++) {
+            alphaHash[i] = (byte) 0xAA;
+            betaHash[i] = (byte) 0xBB;
+        }
+        WireMessage.Hello local = new WireMessage.Hello(
+            WireCodec.PROTOCOL_VERSION, "26.2", "1.0.0", "alpha", "10.0.0.1", 8901, new GameEndpoint("10.0.0.1", 25565), null,
+            Handshake.newNonce(), generatePublicKey(), true, alphaHash, 50, WireCapability.localSet());
+        WireMessage.Hello remote = new WireMessage.Hello(
+            WireCodec.PROTOCOL_VERSION, "26.2", "1.0.0", "beta", "10.0.0.2", 8901, new GameEndpoint("10.0.0.2", 25565), null,
+            Handshake.newNonce(), generatePublicKey(), true, betaHash, 50, WireCapability.localSet());
+        assertFalse(negotiateUseDict(local, remote));
+    }
+
+    @Test
+    void unsupportedRemoteForcesPlainMode() throws Exception {
+        CompressionDictionary dictionary = trainDictionary();
+        WireMessage.Hello local = new WireMessage.Hello(
+            WireCodec.PROTOCOL_VERSION, "26.2", "1.0.0", "alpha", "10.0.0.1", 8901, new GameEndpoint("10.0.0.1", 25565), null,
+            Handshake.newNonce(), generatePublicKey(), true, dictionary.hash(), dictionary.version(), WireCapability.localSet());
+        WireMessage.Hello remote = new WireMessage.Hello(
+            WireCodec.PROTOCOL_VERSION, "26.2", "1.0.0", "beta", "10.0.0.2", 8901, new GameEndpoint("10.0.0.2", 25565), null,
+            Handshake.newNonce(), generatePublicKey(), false, CompressionDictionary.ZERO_HASH, 0, WireCapability.localSet());
+        assertFalse(negotiateUseDict(local, remote));
+    }
+
+    @Test
+    void zeroVersionDoesNotNegotiateDict() throws Exception {
+        WireMessage.Hello local = new WireMessage.Hello(
+            WireCodec.PROTOCOL_VERSION, "26.2", "1.0.0", "alpha", "10.0.0.1", 8901, new GameEndpoint("10.0.0.1", 25565), null,
+            Handshake.newNonce(), generatePublicKey(), true, CompressionDictionary.ZERO_HASH, 0, WireCapability.localSet());
+        WireMessage.Hello remote = new WireMessage.Hello(
+            WireCodec.PROTOCOL_VERSION, "26.2", "1.0.0", "beta", "10.0.0.2", 8901, new GameEndpoint("10.0.0.2", 25565), null,
+            Handshake.newNonce(), generatePublicKey(), true, CompressionDictionary.ZERO_HASH, 0, WireCapability.localSet());
+        assertFalse(negotiateUseDict(local, remote));
+    }
+
+    @Test
+    void invalidHashLengthIsRejectedAtEncodeTime() throws Exception {
+        WireMessage.Hello hello = new WireMessage.Hello(
+            WireCodec.PROTOCOL_VERSION, "26.2", "1.0.0", "alpha", "10.0.0.1", 8901, new GameEndpoint("10.0.0.1", 25565), null,
+            Handshake.newNonce(), generatePublicKey(), true, new byte[]{1, 2, 3}, 1, WireCapability.localSet());
+        try {
+            WireCodec.encodeFrame(hello);
+        } catch (IOException expected) {
+            return;
+        }
+        throw new AssertionError("expected IOException for malformed hash length");
+    }
+}

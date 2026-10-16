@@ -1,0 +1,702 @@
+package art.arcane.wormholes.render;
+
+import art.arcane.wormholes.render.view.ProjectionWorldView;
+import art.arcane.wormholes.render.PortalSkinGeometry.SkinTransform;
+import art.arcane.optics.math.Vec3d;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Level;
+
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.World;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.entity.Player;
+import org.bukkit.util.Vector;
+
+import com.github.retrooper.packetevents.PacketEvents;
+import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
+import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
+import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
+import com.github.retrooper.packetevents.protocol.player.User;
+import com.github.retrooper.packetevents.util.Quaternion4f;
+import com.github.retrooper.packetevents.util.Vector3d;
+import com.github.retrooper.packetevents.util.Vector3f;
+import com.github.retrooper.packetevents.wrapper.PacketWrapper;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDestroyEntities;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnEntity;
+
+import io.github.retrooper.packetevents.util.SpigotConversionUtil;
+
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+
+import art.arcane.volmlib.util.collection.KList;
+import art.arcane.volmlib.util.scheduling.FoliaScheduler;
+import art.arcane.wormholes.PortalCandidateSnapshot;
+import art.arcane.wormholes.Settings;
+import art.arcane.wormholes.Wormholes;
+import art.arcane.wormholes.portal.ILocalPortal;
+import art.arcane.wormholes.portal.PortalSurfaceSkins;
+import art.arcane.optics.math.Box;
+import art.arcane.optics.math.Face;
+import art.arcane.wormholes.render.bedrock.ClientProfileService;
+import art.arcane.optics.claim.BlockClaim;
+import art.arcane.optics.math.CellKeys;
+
+public final class PortalSkinRenderer {
+    private static final int FULL_BRIGHT = (15 << 4) | (15 << 20);
+    private static final float VIEW_RANGE = 64.0F;
+    private static final long SHUTDOWN_WAIT_MILLIS = 2_000L;
+    private static final ObserverScheduler ENTITY_SCHEDULER = PortalSkinRenderer::scheduleObserverTask;
+
+    private final ProjectionClaimArbiter claimArbiter;
+    private final Map<UUID, Map<UUID, PortalSkinState>> instances;
+    private final Map<UUID, Set<Integer>> uncertainDisplayIds;
+    private final Set<UUID> teardownInFlight;
+    private final Set<UUID> teardownFailuresReported;
+    private final Set<UUID> displayFailuresReported;
+    private final Map<String, BlockData> blockDataCache;
+    private final Map<BlockData, Integer> globalIdCache;
+    private final ObserverScheduler observerScheduler;
+    private final ReconciliationGate reconciliationGate;
+
+    public PortalSkinRenderer(ProjectionClaimArbiter claimArbiter) {
+        this(claimArbiter, ENTITY_SCHEDULER);
+    }
+
+    PortalSkinRenderer(ProjectionClaimArbiter claimArbiter, ObserverScheduler observerScheduler) {
+        this.claimArbiter = claimArbiter;
+        this.instances = new ConcurrentHashMap<UUID, Map<UUID, PortalSkinState>>();
+        this.uncertainDisplayIds = new ConcurrentHashMap<UUID, Set<Integer>>();
+        this.teardownInFlight = ConcurrentHashMap.newKeySet();
+        this.teardownFailuresReported = ConcurrentHashMap.newKeySet();
+        this.displayFailuresReported = ConcurrentHashMap.newKeySet();
+        this.blockDataCache = new ConcurrentHashMap<String, BlockData>();
+        this.globalIdCache = new ConcurrentHashMap<BlockData, Integer>();
+        this.observerScheduler = observerScheduler;
+        this.reconciliationGate = new ReconciliationGate();
+    }
+
+    public boolean isActive() {
+        return !instances.isEmpty() || !uncertainDisplayIds.isEmpty();
+    }
+
+    public Set<UUID> observerIds() {
+        Set<UUID> observerIds = new HashSet<UUID>(instances.keySet());
+        observerIds.addAll(uncertainDisplayIds.keySet());
+        return observerIds;
+    }
+
+    public PortalCandidateSnapshot capture(List<ILocalPortal> skinnedPortals) {
+        return PortalCandidateSnapshot.capturePortalWorld(skinnedPortals);
+    }
+
+    public void reconcile(Player observer, PortalCandidateSnapshot candidates) {
+        if (observer == null) {
+            return;
+        }
+        if (!reconciliationGate.enter()) {
+            return;
+        }
+        try {
+            reconcileObserver(observer, candidates);
+        } finally {
+            try {
+                if (reconciliationGate.isClosed()) {
+                    attemptTeardownObserver(observer);
+                }
+            } finally {
+                reconciliationGate.exit();
+            }
+        }
+    }
+
+    public void discardObserver(UUID observerId) {
+        instances.remove(observerId);
+        uncertainDisplayIds.remove(observerId);
+        displayFailuresReported.remove(observerId);
+    }
+
+    public void shutdown() {
+        if (!reconciliationGate.close()) {
+            return;
+        }
+        long deadlineNanos = System.nanoTime() + (SHUTDOWN_WAIT_MILLIS * 1_000_000L);
+        awaitReconciliationQuiescence(deadlineNanos);
+        Map<UUID, Player> onlineById = new HashMap<UUID, Player>();
+        for (Player player : new ArrayList<Player>(Wormholes.instance.getServer().getOnlinePlayers())) {
+            onlineById.put(player.getUniqueId(), player);
+        }
+        for (UUID observerId : observerIds()) {
+            if (!onlineById.containsKey(observerId)) {
+                instances.remove(observerId);
+                uncertainDisplayIds.remove(observerId);
+            }
+        }
+        long remainingNanos = Math.max(0L, deadlineNanos - System.nanoTime());
+        drainOwnerTeardown(onlineById, Math.max(1, Settings.PROJECTION_MAX_NEW_OBSERVER_SCANS_PER_TICK),
+            remainingNanos / 1_000_000L);
+        blockDataCache.clear();
+        globalIdCache.clear();
+    }
+
+    private void awaitReconciliationQuiescence(long deadlineNanos) {
+        while (reconciliationGate.active() > 0 && System.nanoTime() < deadlineNanos) {
+            try {
+                Thread.sleep(1L);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    private void drainOwnerTeardown(Map<UUID, Player> onlineById, int maxInFlight, long waitMillis) {
+        Object completionSignal = new Object();
+        long deadlineNanos = System.nanoTime() + (Math.max(0L, waitMillis) * 1_000_000L);
+        while (isActive()) {
+            int available = Math.max(0, maxInFlight - teardownInFlight.size());
+            for (UUID observerId : observerIds()) {
+                if (available <= 0) {
+                    break;
+                }
+                Player observer = onlineById.get(observerId);
+                if (observer == null || !observer.isOnline()) {
+                    instances.remove(observerId);
+                    uncertainDisplayIds.remove(observerId);
+                    continue;
+                }
+                try {
+                    boolean scheduled = dispatchObserverTask(teardownInFlight, observerId, observer,
+                        () -> attemptTeardownObserver(observer), observerScheduler, () -> signal(completionSignal));
+                    if (scheduled) {
+                        available--;
+                    }
+                } catch (RuntimeException error) {
+                    reportTeardownFailure(observerId, "schedule", error);
+                }
+            }
+            if (!isActive() || System.nanoTime() >= deadlineNanos) {
+                break;
+            }
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            long waitSliceMillis = Math.max(1L, Math.min(10L, remainingNanos / 1_000_000L));
+            synchronized (completionSignal) {
+                try {
+                    completionSignal.wait(waitSliceMillis);
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        if (isActive()) {
+            Wormholes.instance.getLogger().warning("Portal skin shutdown retained " + observerIds().size()
+                + " observer teardown states because their entity schedulers did not complete before the deadline.");
+        }
+    }
+
+    private void teardownObserver(Player observer) {
+        UUID observerId = observer.getUniqueId();
+        Map<UUID, PortalSkinState> current = instances.get(observerId);
+        World world = observer.getWorld();
+        if (current != null) {
+            for (PortalSkinState state : current.values()) {
+                teardown(observer, state, world);
+            }
+            instances.remove(observerId, current);
+        }
+        cleanupUncertainDisplays(observer);
+    }
+
+    private void attemptTeardownObserver(Player observer) {
+        try {
+            teardownObserver(observer);
+        } catch (RuntimeException error) {
+            reportTeardownFailure(observer.getUniqueId(), "complete", error);
+        }
+    }
+
+    private void reportTeardownFailure(UUID observerId, String operation, RuntimeException error) {
+        if (!teardownFailuresReported.add(observerId)) {
+            return;
+        }
+        Wormholes.instance.getLogger().log(Level.WARNING,
+            "Unable to " + operation + " portal skin teardown for " + observerId, error);
+    }
+
+    static boolean dispatchObserverTask(Set<UUID> inFlight,
+                                        UUID observerId,
+                                        Player observer,
+                                        Runnable task,
+                                        ObserverScheduler scheduler,
+                                        Runnable terminal) {
+        if (!inFlight.add(observerId)) {
+            return false;
+        }
+        AtomicBoolean completed = new AtomicBoolean();
+        Runnable complete = () -> {
+            if (!completed.compareAndSet(false, true)) {
+                return;
+            }
+            inFlight.remove(observerId);
+            terminal.run();
+        };
+        boolean scheduled;
+        try {
+            scheduled = scheduler.schedule(observer, () -> {
+                try {
+                    task.run();
+                } finally {
+                    complete.run();
+                }
+            }, complete);
+        } catch (RuntimeException error) {
+            complete.run();
+            throw error;
+        }
+        if (!scheduled) {
+            complete.run();
+        }
+        return scheduled;
+    }
+
+    private static void signal(Object completionSignal) {
+        synchronized (completionSignal) {
+            completionSignal.notifyAll();
+        }
+    }
+
+    private static boolean scheduleObserverTask(Player observer, Runnable task, Runnable retired) {
+        if (FoliaScheduler.isOwnedByCurrentRegion(observer)) {
+            task.run();
+            return true;
+        }
+        return FoliaScheduler.runEntity(Wormholes.instance, observer, task, 0L, retired);
+    }
+
+    private void reconcileObserver(Player observer, PortalCandidateSnapshot candidates) {
+        if (observer == null || !observer.isOnline()) {
+            return;
+        }
+        UUID observerId = observer.getUniqueId();
+        World world = observer.getWorld();
+        if (world == null) {
+            return;
+        }
+        Location location = observer.getLocation();
+        if (!cleanupUncertainDisplays(observer)) {
+            return;
+        }
+        Map<UUID, PortalSkinState> current = instances.get(observerId);
+
+        Set<UUID> eligible = new HashSet<UUID>();
+        for (ILocalPortal portal : candidates.candidates(world, location)) {
+            UUID portalId = portal.getId();
+            if (portalId == null) {
+                continue;
+            }
+            World portalWorld = portal.getWorld();
+            if (portalWorld == null || !world.getUID().equals(portalWorld.getUID())) {
+                continue;
+            }
+            Box view = portal.getView();
+            if (view == null || !view.containsPrimitive(location.getX(), location.getY(), location.getZ())) {
+                continue;
+            }
+            String skin = portal.getSurfaceSkin();
+            SkinRenderMode mode = skinRenderMode(skin);
+            if (mode == SkinRenderMode.NONE) {
+                continue;
+            }
+            if (mode == SkinRenderMode.DISPLAY && ClientProfileService.profileFor(observer).withholdsDisplays()) {
+                mode = SkinRenderMode.FLUID_CLAIMS;
+            }
+            eligible.add(portalId);
+            String key = stateKey(portal) + "|" + mode.name();
+            PortalSkinState existing = current == null ? null : current.get(portalId);
+            if (existing != null && existing.stateKey().equals(key)) {
+                if (existing.mode() == SkinRenderMode.FLUID_CLAIMS) {
+                    submitFluidClaims(observer, portal, world, existing.claimOwnerId(), existing.fluidClaims());
+                }
+                continue;
+            }
+            if (existing != null) {
+                teardown(observer, existing, world);
+            }
+            PortalSkinState spawned = spawn(observer, portal, mode, skin, world, key);
+            if (spawned == null) {
+                if (current != null) {
+                    current.remove(portalId);
+                }
+                continue;
+            }
+            if (current == null) {
+                current = new ConcurrentHashMap<UUID, PortalSkinState>();
+                Map<UUID, PortalSkinState> raced = instances.putIfAbsent(observerId, current);
+                if (raced != null) {
+                    current = raced;
+                }
+            }
+            current.put(portalId, spawned);
+        }
+
+        if (current == null) {
+            return;
+        }
+        for (UUID portalId : new ArrayList<UUID>(current.keySet())) {
+            if (eligible.contains(portalId)) {
+                continue;
+            }
+            PortalSkinState stale = current.get(portalId);
+            if (stale != null) {
+                teardown(observer, stale, world);
+                current.remove(portalId, stale);
+            }
+        }
+        if (current.isEmpty()) {
+            instances.remove(observerId, current);
+        }
+    }
+
+    private PortalSkinState spawn(Player observer, ILocalPortal portal, SkinRenderMode mode, String skin, World world, String stateKey) {
+        BlockData data = blockDataFor(skin);
+        if (data == null) {
+            return null;
+        }
+        if (mode == SkinRenderMode.FLUID_CLAIMS) {
+            return spawnFluid(observer, portal, data, world, stateKey);
+        }
+        return spawnDisplays(observer, portal, data, stateKey);
+    }
+
+    private PortalSkinState spawnFluid(Player observer, ILocalPortal portal, BlockData data, World world, String stateKey) {
+        UUID claimOwnerId = fluidClaimOwnerId(portal.getId());
+        KList<Vector> cells = portal.getStructure().getBlockPositions();
+        if (cells.isEmpty()) {
+            return null;
+        }
+        Long2ObjectOpenHashMap<BlockClaim<BlockData, ProjectionWorldView>> claims = fluidClaims(cells, data);
+        if (!submitFluidClaims(observer, portal, world, claimOwnerId, claims)) {
+            return null;
+        }
+        return new PortalSkinState(SkinRenderMode.FLUID_CLAIMS, stateKey, null, portal, claimOwnerId, claims);
+    }
+
+    private boolean submitFluidClaims(Player observer, ILocalPortal portal, World world, UUID claimOwnerId,
+                                      Long2ObjectOpenHashMap<BlockClaim<BlockData, ProjectionWorldView>> claims) {
+        if (claims == null || claims.isEmpty()) {
+            return false;
+        }
+        claimArbiter.submit(observer, claimOwnerId, world, claims, priorityDistance(observer, portal), false);
+        return true;
+    }
+
+    static Long2ObjectOpenHashMap<BlockClaim<BlockData, ProjectionWorldView>> fluidClaims(List<Vector> cells, BlockData data) {
+        Long2ObjectOpenHashMap<BlockClaim<BlockData, ProjectionWorldView>> claims =
+            new Long2ObjectOpenHashMap<BlockClaim<BlockData, ProjectionWorldView>>(Math.max(4, cells.size() * 2));
+        for (Vector cell : cells) {
+            long key = CellKeys.pack(cell.getBlockX(), cell.getBlockY(), cell.getBlockZ());
+            claims.put(key, new BlockClaim<BlockData, ProjectionWorldView>(data, null, BlockClaim.NO_REMOTE_KEY, false));
+        }
+        return claims;
+    }
+
+    private PortalSkinState spawnDisplays(Player observer, ILocalPortal portal, BlockData data, String stateKey) {
+        int globalId = globalIdFor(data);
+        if (globalId < 0) {
+            return null;
+        }
+        List<SkinTransform> panes = PortalSkinGeometry.panes(portal.getStructure().geometry(), portal.getFrame(), portal.getOrigin());
+        if (panes.isEmpty()) {
+            return null;
+        }
+        int[] ids = sendDisplayBatch(observer, panes, globalId);
+        if (ids == null) {
+            return null;
+        }
+        return new PortalSkinState(SkinRenderMode.DISPLAY, stateKey, ids, portal, null, null);
+    }
+
+    int[] sendDisplayBatch(Player observer, List<SkinTransform> panes, int globalId) {
+        if (!cleanupUncertainDisplays(observer)) {
+            return null;
+        }
+        User user;
+        try {
+            user = PacketEvents.getAPI().getPlayerManager().getUser(observer);
+        } catch (RuntimeException error) {
+            noteDisplayFailure(observer.getUniqueId(), "lookup", error);
+            return null;
+        }
+        int[] ids = new int[panes.size()];
+        int allocatedCount = 0;
+        RuntimeException failure = null;
+        try {
+            for (SkinTransform pane : panes) {
+                int id = ProjectedEntityIdentity.nextEntityId();
+                ids[allocatedCount] = id;
+                allocatedCount++;
+                sendDisplay(observer, user, id, pane, globalId);
+            }
+        } catch (RuntimeException error) {
+            failure = error;
+        }
+        if (user != null) {
+            try {
+                user.flushPackets();
+            } catch (RuntimeException error) {
+                failure = suppress(failure, error);
+            }
+        }
+        if (failure == null) {
+            displayFailuresReported.remove(observer.getUniqueId());
+            return ids;
+        }
+        int[] uncertainIds = Arrays.copyOf(ids, allocatedCount);
+        try {
+            destroyDisplays(observer, uncertainIds);
+        } catch (RuntimeException cleanupError) {
+            failure.addSuppressed(cleanupError);
+            rememberUncertainDisplays(observer.getUniqueId(), uncertainIds);
+        }
+        noteDisplayFailure(observer.getUniqueId(), "spawn", failure);
+        return null;
+    }
+
+    private void sendDisplay(Player observer, User user, int entityId, SkinTransform transform, int globalId) {
+        Vector3d position = new Vector3d(transform.anchorX(), transform.anchorY(), transform.anchorZ());
+        WrapperPlayServerSpawnEntity spawn = new WrapperPlayServerSpawnEntity(entityId, Optional.of(UUID.randomUUID()),
+            EntityTypes.BLOCK_DISPLAY, position, 0.0F, 0.0F, 0.0F, 0, Optional.empty());
+        sendPacket(observer, user, spawn);
+        sendPacket(observer, user,
+            new WrapperPlayServerEntityMetadata(entityId, displayMetadata(transform, globalId)));
+    }
+
+    private static List<EntityData<?>> displayMetadata(SkinTransform transform, int globalId) {
+        List<EntityData<?>> metadata = new ArrayList<EntityData<?>>(14);
+        metadata.add(new EntityData<Byte>(0, EntityDataTypes.BYTE, Byte.valueOf((byte) 0)));
+        metadata.add(new EntityData<Boolean>(5, EntityDataTypes.BOOLEAN, Boolean.TRUE));
+        metadata.add(new EntityData<Integer>(8, EntityDataTypes.INT, Integer.valueOf(0)));
+        metadata.add(new EntityData<Integer>(9, EntityDataTypes.INT, Integer.valueOf(0)));
+        metadata.add(new EntityData<Integer>(10, EntityDataTypes.INT, Integer.valueOf(0)));
+        metadata.add(new EntityData<Vector3f>(11, EntityDataTypes.VECTOR3F,
+            new Vector3f((float) transform.translationX(), (float) transform.translationY(), (float) transform.translationZ())));
+        metadata.add(new EntityData<Vector3f>(12, EntityDataTypes.VECTOR3F,
+            new Vector3f((float) transform.scaleX(), (float) transform.scaleY(), (float) transform.scaleZ())));
+        metadata.add(new EntityData<Quaternion4f>(13, EntityDataTypes.QUATERNION, new Quaternion4f(0.0F, 0.0F, 0.0F, 1.0F)));
+        metadata.add(new EntityData<Quaternion4f>(14, EntityDataTypes.QUATERNION, new Quaternion4f(0.0F, 0.0F, 0.0F, 1.0F)));
+        metadata.add(new EntityData<Byte>(15, EntityDataTypes.BYTE, Byte.valueOf((byte) 0)));
+        metadata.add(new EntityData<Integer>(16, EntityDataTypes.INT, Integer.valueOf(FULL_BRIGHT)));
+        metadata.add(new EntityData<Float>(17, EntityDataTypes.FLOAT, Float.valueOf(VIEW_RANGE)));
+        metadata.add(new EntityData<Float>(20, EntityDataTypes.FLOAT, Float.valueOf(0.0F)));
+        metadata.add(new EntityData<Float>(21, EntityDataTypes.FLOAT, Float.valueOf(0.0F)));
+        metadata.add(new EntityData<Integer>(23, EntityDataTypes.BLOCK_STATE, Integer.valueOf(globalId)));
+        return metadata;
+    }
+
+    private void teardown(Player observer, PortalSkinState state, World world) {
+        if (state.mode() == SkinRenderMode.FLUID_CLAIMS) {
+            claimArbiter.release(observer, state.claimOwnerId(), world, true);
+            return;
+        }
+        int[] ids = state.displayIds();
+        if (ids != null && ids.length > 0) {
+            destroyDisplays(observer, ids);
+        }
+    }
+
+    private static void sendPacket(Player observer, User user, PacketWrapper<?> packet) {
+        if (user == null) {
+            PacketEvents.getAPI().getPlayerManager().sendPacket(observer, packet);
+            return;
+        }
+        user.writePacket(packet);
+    }
+
+    private static void destroyDisplays(Player observer, int[] ids) {
+        if (ids.length > 0) {
+            PacketEvents.getAPI().getPlayerManager().sendPacket(observer,
+                new WrapperPlayServerDestroyEntities(ids));
+        }
+    }
+
+    private void rememberUncertainDisplays(UUID observerId, int[] ids) {
+        if (ids.length == 0) {
+            return;
+        }
+        Set<Integer> uncertain = uncertainDisplayIds.computeIfAbsent(observerId,
+            ignored -> ConcurrentHashMap.newKeySet());
+        for (int id : ids) {
+            uncertain.add(Integer.valueOf(id));
+        }
+    }
+
+    private boolean cleanupUncertainDisplays(Player observer) {
+        UUID observerId = observer.getUniqueId();
+        Set<Integer> uncertain = uncertainDisplayIds.get(observerId);
+        if (uncertain == null || uncertain.isEmpty()) {
+            return true;
+        }
+        int[] ids = new int[uncertain.size()];
+        int index = 0;
+        for (Integer id : uncertain) {
+            ids[index] = id.intValue();
+            index++;
+        }
+        try {
+            destroyDisplays(observer, ids);
+        } catch (RuntimeException error) {
+            noteDisplayFailure(observerId, "cleanup", error);
+            return false;
+        }
+        for (int id : ids) {
+            uncertain.remove(Integer.valueOf(id));
+        }
+        if (uncertain.isEmpty()) {
+            uncertainDisplayIds.remove(observerId, uncertain);
+            displayFailuresReported.remove(observerId);
+        }
+        return true;
+    }
+
+    int uncertainDisplayCount(UUID observerId) {
+        Set<Integer> uncertain = uncertainDisplayIds.get(observerId);
+        return uncertain == null ? 0 : uncertain.size();
+    }
+
+    private void noteDisplayFailure(UUID observerId, String operation, RuntimeException error) {
+        if (!displayFailuresReported.add(observerId) || Wormholes.instance == null) {
+            return;
+        }
+        Wormholes.instance.getLogger().log(Level.WARNING,
+            "Unable to " + operation + " portal skin displays for " + observerId, error);
+    }
+
+    private static RuntimeException suppress(RuntimeException primary, RuntimeException secondary) {
+        if (primary == null) {
+            return secondary;
+        }
+        primary.addSuppressed(secondary);
+        return primary;
+    }
+
+    private BlockData blockDataFor(String skin) {
+        BlockData cached = blockDataCache.get(skin);
+        if (cached != null) {
+            return cached;
+        }
+        BlockData parsed;
+        try {
+            parsed = Bukkit.createBlockData(skin);
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+        blockDataCache.put(skin, parsed);
+        return parsed;
+    }
+
+    private int globalIdFor(BlockData data) {
+        Integer cached = globalIdCache.get(data);
+        if (cached != null) {
+            return cached.intValue();
+        }
+        int id;
+        try {
+            id = SpigotConversionUtil.fromBukkitBlockData(data).getGlobalId();
+        } catch (RuntimeException ex) {
+            return -1;
+        }
+        globalIdCache.put(data, Integer.valueOf(id));
+        return id;
+    }
+
+    private static String stateKey(ILocalPortal portal) {
+        return portal.getStructure().getRevision() + "|" + portal.getSurfaceSkin();
+    }
+
+    private static double priorityDistance(Player observer, ILocalPortal portal) {
+        Location eye = observer.getEyeLocation();
+        Vec3d origin = portal.getOrigin();
+        Face normal = portal.getFrame().getNormal();
+        double dot = ((eye.getX() - origin.x()) * normal.x())
+            + ((eye.getY() - origin.y()) * normal.y())
+            + ((eye.getZ() - origin.z()) * normal.z());
+        return Math.abs(dot);
+    }
+
+    static SkinRenderMode skinRenderMode(String skin) {
+        if (PortalSurfaceSkins.normalizeSkin(skin).isEmpty()) {
+            return SkinRenderMode.NONE;
+        }
+        if (PortalSurfaceSkins.isFluid(skin)) {
+            return SkinRenderMode.FLUID_CLAIMS;
+        }
+        return SkinRenderMode.DISPLAY;
+    }
+
+    static UUID fluidClaimOwnerId(UUID portalId) {
+        return UUID.nameUUIDFromBytes(("wormholes:surface-skin:" + portalId).getBytes(StandardCharsets.UTF_8));
+    }
+
+    enum SkinRenderMode {
+        NONE,
+        DISPLAY,
+        FLUID_CLAIMS
+    }
+
+    private record PortalSkinState(SkinRenderMode mode, String stateKey, int[] displayIds,
+                                   ILocalPortal portal, UUID claimOwnerId,
+                                   Long2ObjectOpenHashMap<BlockClaim<BlockData, ProjectionWorldView>> fluidClaims) {
+    }
+
+    @FunctionalInterface
+    interface ObserverScheduler {
+        boolean schedule(Player observer, Runnable task, Runnable retired);
+    }
+
+    static final class ReconciliationGate {
+        private final AtomicBoolean closed = new AtomicBoolean();
+        private final AtomicInteger active = new AtomicInteger();
+
+        boolean enter() {
+            if (closed.get()) {
+                return false;
+            }
+            active.incrementAndGet();
+            if (!closed.get()) {
+                return true;
+            }
+            active.decrementAndGet();
+            return false;
+        }
+
+        void exit() {
+            active.decrementAndGet();
+        }
+
+        boolean close() {
+            return closed.compareAndSet(false, true);
+        }
+
+        boolean isClosed() {
+            return closed.get();
+        }
+
+        int active() {
+            return active.get();
+        }
+    }
+}

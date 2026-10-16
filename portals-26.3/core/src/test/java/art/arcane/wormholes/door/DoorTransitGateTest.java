@@ -1,0 +1,224 @@
+package art.arcane.wormholes.door;
+
+import art.arcane.optics.math.Face;
+import art.arcane.optics.math.Vec3d;
+import art.arcane.optics.crossing.PlaneCrossing;
+import org.junit.jupiter.api.Test;
+
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+public final class DoorTransitGateTest
+{
+	@Test
+	public void newlyPlacedPairNeedsOnlySourceLiveOpenState()
+	{
+		DoorOpenCycle source = new DoorOpenCycle();
+		DoorOpenCycle mate = new DoorOpenCycle();
+		source.observe(false);
+		mate.observe(false);
+
+		Optional<PlaneCrossing> crossing = DoorTransitGate.detect(
+			new DoorwayPlane(0, 64, 0, Face.N),
+			new Vec3d(0.5D, 65.0D, 1.0D),
+			new Vec3d(0.5D, 65.0D, 0.0D));
+
+		assertTrue(crossing.isPresent());
+		assertTrue(DoorTransitGate.claim(source, true, true));
+		assertEquals(DoorOpenCycle.Phase.IN_TRANSIT, source.phase());
+		assertEquals(DoorOpenCycle.Phase.CLOSED, mate.phase());
+	}
+
+	@Test
+	public void closedSourceCannotClaimDetectedCrossing()
+	{
+		DoorOpenCycle source = new DoorOpenCycle();
+		Optional<PlaneCrossing> crossing = DoorTransitGate.detect(
+			new DoorwayPlane(0, 64, 0, Face.N),
+			new Vec3d(0.5D, 65.0D, 1.0D),
+			new Vec3d(0.5D, 65.0D, 0.0D));
+
+		assertTrue(crossing.isPresent());
+		assertFalse(DoorTransitGate.claim(source, false, false));
+		assertEquals(DoorOpenCycle.Phase.CLOSED, source.phase());
+	}
+
+	@Test
+	public void closedAtCrossingCannotClaimAfterDoorOpens()
+	{
+		DoorOpenCycle source = new DoorOpenCycle();
+
+		assertFalse(DoorTransitGate.claim(source, false, true));
+		assertEquals(DoorOpenCycle.Phase.ARMED, source.phase());
+	}
+
+	@Test
+	public void openAtCrossingCannotClaimAfterDoorCloses()
+	{
+		DoorOpenCycle source = new DoorOpenCycle();
+
+		assertFalse(DoorTransitGate.claim(source, true, false));
+		assertEquals(DoorOpenCycle.Phase.CLOSED, source.phase());
+	}
+
+	@Test
+	public void movementFarFromDoorIsNotAdmitted()
+	{
+		Optional<PlaneCrossing> crossing = DoorTransitGate.detect(
+			new DoorwayPlane(0, 64, 0, Face.N),
+			new Vec3d(10.5D, 65.0D, 1.0D),
+			new Vec3d(10.5D, 65.0D, 0.0D));
+
+		assertTrue(crossing.isEmpty());
+	}
+
+	@Test
+	public void slowMovementJustOutsideTheFixedBandIsStillRejected()
+	{
+		Optional<PlaneCrossing> crossing = DoorTransitGate.detect(
+			new DoorwayPlane(0, 64, 0, Face.N),
+			new Vec3d(3.5D, 65.0D, 0.2D),
+			new Vec3d(3.5D, 65.0D, -0.2D));
+
+		assertTrue(crossing.isEmpty());
+	}
+
+	@Test
+	public void fastSegmentReachingAcrossThePlaneIsAdmitted()
+	{
+		Optional<PlaneCrossing> crossing = DoorTransitGate.detect(
+			new DoorwayPlane(0, 64, 0, Face.N),
+			new Vec3d(0.5D, 65.0D, 3.0D),
+			new Vec3d(0.5D, 65.0D, -0.1D));
+
+		assertTrue(crossing.isPresent());
+		assertFalse(crossing.get().frontSide());
+	}
+
+	@Test
+	public void fastSegmentWideOfThePlaneStillFindsNoCrossing()
+	{
+		Optional<PlaneCrossing> crossing = DoorTransitGate.detect(
+			new DoorwayPlane(0, 64, 0, Face.N),
+			new Vec3d(3.5D, 65.0D, 3.0D),
+			new Vec3d(3.5D, 65.0D, -0.1D));
+
+		assertTrue(crossing.isEmpty());
+	}
+
+	@Test
+	public void objectsPassThroughAnOpenDoorWithoutClaimingItsCycle()
+	{
+		DoorOpenCycle cycle = new DoorOpenCycle();
+		cycle.observe(false);
+
+		assertTrue(DoorTransitGate.passThrough(cycle, true, true));
+		assertEquals(DoorOpenCycle.Phase.ARMED, cycle.phase());
+		assertTrue(DoorTransitGate.passThrough(cycle, true, true));
+		assertEquals(DoorOpenCycle.Phase.ARMED, cycle.phase());
+	}
+
+	@Test
+	public void objectsCannotPassThroughAClosedDoor()
+	{
+		DoorOpenCycle cycle = new DoorOpenCycle();
+
+		assertFalse(DoorTransitGate.passThrough(cycle, true, false));
+		assertFalse(DoorTransitGate.passThrough(cycle, false, true));
+		assertEquals(DoorOpenCycle.Phase.ARMED, cycle.phase());
+	}
+
+	@Test
+	public void objectsNeverStealAClaimedPlayerTransit()
+	{
+		DoorOpenCycle cycle = new DoorOpenCycle();
+		cycle.observe(false);
+		assertTrue(DoorTransitGate.claim(cycle, true, true));
+		assertEquals(DoorOpenCycle.Phase.IN_TRANSIT, cycle.phase());
+
+		assertTrue(DoorTransitGate.passThrough(cycle, true, true));
+
+		assertEquals(DoorOpenCycle.Phase.IN_TRANSIT, cycle.phase());
+	}
+
+	@Test
+	public void anObjectCompletionCannotRearmARedstoneHeldDoor()
+	{
+		DoorOpenCycle cycle = new DoorOpenCycle();
+		cycle.observe(false);
+		assertTrue(DoorTransitGate.claim(cycle, true, true));
+		assertEquals(DoorOpenCycle.Phase.CONSUMED, cycle.complete(true, true));
+
+		DoorTransitGate.complete(cycle, objectTransit(), true, false);
+
+		assertEquals(DoorOpenCycle.Phase.CONSUMED, cycle.phase());
+		assertTrue(cycle.portalActive());
+	}
+
+	@Test
+	public void aClosedContactSurfaceCompletionLeavesItsPermanentlyLivePlateAlone()
+	{
+		DoorOpenCycle cycle = new DoorOpenCycle();
+		cycle.observe(true);
+		DoorTransit contact = new DoorTransit(
+			DoorwayPlane.trapdoor(
+				0, 64, 0, Face.N, DoorHalf.BOTTOM, DoorOpenState.CLOSED),
+			true,
+			0.0F,
+			0.0F);
+
+		DoorTransitGate.complete(cycle, contact, true, false);
+
+		assertTrue(cycle.portalActive());
+		assertEquals(DoorOpenCycle.Phase.ARMED, cycle.phase());
+	}
+
+	@Test
+	public void aClaimedTransitStillConsumesItsCycleOnTheClosedDoorItLeavesBehind()
+	{
+		DoorOpenCycle cycle = new DoorOpenCycle();
+		cycle.observe(false);
+		assertTrue(DoorTransitGate.claim(cycle, true, true));
+
+		DoorTransitGate.complete(cycle, livingTransit(), true, false);
+
+		assertEquals(DoorOpenCycle.Phase.CLOSED, cycle.phase());
+		assertFalse(cycle.portalActive());
+	}
+
+	@Test
+	public void completingATransitTheCycleNeverAdmittedIsHarmless()
+	{
+		DoorOpenCycle cycle = new DoorOpenCycle();
+		cycle.observe(true);
+
+		DoorTransitGate.complete(cycle, livingTransit(), true, true);
+
+		assertEquals(DoorOpenCycle.Phase.ARMED, cycle.phase());
+	}
+
+	private static DoorTransit objectTransit()
+	{
+		return new DoorTransit(
+			new DoorwayPlane(0, 64, 0, Face.N),
+			true,
+			0.0F,
+			0.0F,
+			0.25D,
+			0.25D,
+			DoorTravelerClass.OBJECT,
+			new Vec3d(0.0D, 0.0D, -3.0D));
+	}
+
+	private static DoorTransit livingTransit()
+	{
+		return new DoorTransit(
+			new DoorwayPlane(0, 64, 0, Face.N),
+			true,
+			0.0F,
+			0.0F);
+	}
+}

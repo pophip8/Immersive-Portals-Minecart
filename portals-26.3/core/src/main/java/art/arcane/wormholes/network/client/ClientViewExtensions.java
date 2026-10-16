@@ -1,0 +1,20 @@
+package art.arcane.wormholes.network.client;
+
+import java.util.List;
+
+import art.arcane.optics.stream.ViewStreamCapability;
+import art.arcane.optics.stream.ViewStreamCodec;
+import art.arcane.optics.stream.ViewStreamExtension;
+
+public final class ClientViewExtensions {
+    public static final long FX_EMITTERS = 1L << ViewStreamCapability.FIRST_EXTENSION_BIT;
+    public static final long REMOTE_VIEW = FX_EMITTERS << 3;
+    public static final long SEAMLESS_TRAVEL = FX_EMITTERS << 4;
+    public static final long ROOT_SOURCE = FX_EMITTERS << 5;
+    public static final long LOCAL_DESTINATION = FX_EMITTERS << 6;
+    public static final List<ViewStreamExtension<?>> ALL = List.of(FxExtension.INSTANCE, RootSourceExtension.INSTANCE);
+    public static final ViewStreamCodec CODEC = new ViewStreamCodec(ALL);
+
+    private ClientViewExtensions() {
+    }
+}

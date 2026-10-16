@@ -1,0 +1,53 @@
+package art.arcane.wormholes.modded.client;
+
+import art.arcane.wormholes.modded.MinecraftTestBase;
+import art.arcane.optics.math.Vec3d;
+import art.arcane.wormholes.modded.client.render.PortalEnvironmentTest;
+import art.arcane.optics.stream.ViewStreamMessage;
+import art.arcane.optics.frame.Frame;
+import art.arcane.optics.frame.OpticTransform;
+import art.arcane.optics.frame.AxisPermutation;
+import art.arcane.optics.frame.QuarterTurn;
+import art.arcane.optics.math.Face;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.HugeMushroomBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import org.junit.Test;
+
+import static org.junit.Assert.assertSame;
+
+public class ClientLocalMeshOrientationTest extends MinecraftTestBase {
+    @Test
+    public void nativeMirrorSectionsRetainSourceFacesForSingleVertexReflection() throws Exception {
+        BlockState original = Blocks.RED_MUSHROOM_BLOCK.defaultBlockState()
+            .setValue(HugeMushroomBlock.UP, true)
+            .setValue(HugeMushroomBlock.DOWN, false)
+            .setValue(HugeMushroomBlock.NORTH, true)
+            .setValue(HugeMushroomBlock.SOUTH, false)
+            .setValue(HugeMushroomBlock.EAST, true)
+            .setValue(HugeMushroomBlock.WEST, false);
+        for (Face normal : Face.values()) {
+            for (int quarterTurns = 0; quarterTurns < 4; quarterTurns++) {
+                AxisPermutation mapping = AxisPermutation.mirror(Frame.canonical(normal), QuarterTurn.of(quarterTurns));
+                Face x = mapping.face(Face.E);
+                Face y = mapping.face(Face.U);
+                Face z = mapping.face(Face.S);
+                Vec3d translation = new Vec3d(
+                    x.x() < 0 || y.x() < 0 || z.x() < 0 ? 16 : 0,
+                    x.y() < 0 || y.y() < 0 || z.y() < 0 ? 16 : 0,
+                    x.z() < 0 || y.z() < 0 || z.z() < 0 ? 16 : 0);
+                ClientLocalMeshSourcesTest.Fixture fixture = new ClientLocalMeshSourcesTest.Fixture();
+                fixture.state.set(original);
+                OpticTransform transform = OpticTransform.of(AxisPermutation.of(x, y, z), translation.x(), translation.y(), translation.z());
+                fixture.session.handle(new ViewStreamMessage.Environment(1, PortalEnvironmentTest.environment(transform)), fixture.sink);
+                fixture.awaitSection();
+                ClientMeshSections.Section section = fixture.session.meshes().view(1).section(0L);
+                for (int cell = 0; cell < 4096; cell++) {
+                    assertSame("normal=" + normal + " turns=" + quarterTurns + " cell=" + cell, original, section.state(cell));
+                }
+                fixture.sources.clear();
+                fixture.session.clearPortals();
+            }
+        }
+    }
+}

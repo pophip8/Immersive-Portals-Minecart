@@ -1,0 +1,1461 @@
+package art.arcane.wormholes.network;
+
+import com.github.retrooper.packetevents.protocol.player.ClientVersion;
+import art.arcane.wormholes.util.BukkitJsonDocuments;
+import art.arcane.wormholes.Wormholes;
+import art.arcane.wormholes.config.toml.NetworkConfig;
+import art.arcane.wormholes.portal.UniversalTunnel;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.StandardProtocolFamily;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
+
+@Timeout(30)
+class NetworkManagerTest {
+    private static final Logger LOGGER = Logger.getLogger("NetworkManagerTest");
+    private static final String ALPHA_NAME = "alpha";
+    private static final int ALPHA_GAME_PORT;
+    private static final String BETA_NAME = "beta";
+    private static final int BETA_GAME_PORT;
+    private static final String ZULU_NAME = "zulu";
+    private static final Map<String, Handler> CAPTURED = new ConcurrentHashMap<>();
+
+    static {
+        try {
+            ALPHA_GAME_PORT = TestPorts.free();
+            BETA_GAME_PORT = TestPorts.free();
+        } catch (IOException error) {
+            throw new ExceptionInInitializerError(error);
+        }
+    }
+
+    @TempDir
+    Path tempDir;
+
+    private final List<NetworkManager> managers = new ArrayList<>();
+
+    @AfterEach
+    void tearDown() {
+        for (NetworkManager manager : managers) {
+            manager.stop();
+        }
+        managers.clear();
+    }
+
+    private static int freePort() throws IOException {
+        return TestPorts.free();
+    }
+
+    private static boolean udsSupported() {
+        try (ServerSocketChannel ignored = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static void awaitTrue(String what, BooleanSupplier condition, long timeoutMillis) {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        while (System.currentTimeMillis() < deadline) {
+            if (condition.getAsBoolean()) {
+                return;
+            }
+            try {
+                Thread.sleep(10L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                fail("Interrupted while waiting for: " + what);
+            }
+        }
+        fail("Timed out waiting for: " + what);
+    }
+
+    private static List<String> captureWarnings(Logger logger) {
+        List<String> warnings = Collections.synchronizedList(new ArrayList<String>());
+        Handler capture = new Handler() {
+            @Override
+            public void publish(LogRecord record) {
+                if (record.getLevel().intValue() >= Level.WARNING.intValue() && record.getMessage() != null) {
+                    warnings.add(record.getMessage());
+                }
+            }
+
+            @Override
+            public void flush() {
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+        logger.addHandler(capture);
+        CAPTURED.put(logger.getName(), capture);
+        return warnings;
+    }
+
+    private static void releaseWarnings(Logger logger) {
+        Handler capture = CAPTURED.remove(logger.getName());
+        if (capture != null) {
+            logger.removeHandler(capture);
+        }
+    }
+
+    private static void startAndDial(NetworkManager... started) {
+        for (NetworkManager manager : started) {
+            for (NetworkManager peer : started) {
+                if (peer != manager) {
+                    manager.statusPollInFlight.add(peer.getLocalName());
+                }
+            }
+            manager.start();
+            assertEquals(manager.activeConfig().listenPort, manager.getBoundListenPort(),
+                "listener fell back off its configured port, so saved peer routes would point at nothing");
+        }
+        for (NetworkManager manager : started) {
+            manager.dialer().scan();
+        }
+    }
+
+    private static void awaitDialed(String what, BooleanSupplier condition, long timeoutMillis,
+                                    NetworkManager... dialers) {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        while (System.currentTimeMillis() < deadline) {
+            if (condition.getAsBoolean()) {
+                return;
+            }
+            for (NetworkManager manager : dialers) {
+                manager.dialer().scan();
+            }
+            try {
+                Thread.sleep(10L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                fail("Interrupted while waiting for: " + what);
+            }
+        }
+        fail("Timed out waiting for: " + what);
+    }
+
+    private static NetworkConfig config(int listenPort, String serverName) {
+        NetworkConfig config = new NetworkConfig();
+        config.enabled = true;
+        config.serverName = serverName == null ? "" : serverName;
+        config.advertiseHostOverride = "127.0.0.1";
+        config.listenPort = listenPort;
+        return config;
+    }
+
+    private static NetworkConfig.PeerEntry route(String peerName, int peerPort) {
+        return route(peerName, "127.0.0.1", peerPort);
+    }
+
+    private static NetworkConfig.PeerEntry route(String peerName, String host, int peerPort) {
+        NetworkConfig.PeerEntry peer = new NetworkConfig.PeerEntry();
+        peer.name = peerName;
+        peer.host = host;
+        peer.port = peerPort;
+        return peer;
+    }
+
+    private static NetworkConfig.PeerEntry sidebandRoute(String peerName, int rawPort, int gamePort) {
+        NetworkConfig.PeerEntry peer = route(peerName, rawPort);
+        peer.publicHost = "127.0.0.1";
+        peer.publicPort = gamePort;
+        return peer;
+    }
+
+    private static void exchangeSideband(NetworkManager requester, String responderName, NetworkManager responder) {
+        List<MinecraftStatusBridge.EncodedMessage> outbound = requester.drainStatusOutbox(
+            responderName,
+            NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MAX_BYTES
+        );
+        MinecraftStatusBridge.StatusPacket request = requester.createStatusBridgePacket(responderName, outbound);
+        MinecraftStatusBridge.StatusPacket response = responder.handleStatusBridgeRequest(request);
+        assertNotNull(response);
+        assertTrue(requester.handleStatusBridgeResponse(responderName, response, 1L));
+    }
+
+    private NetworkManager manager(NetworkConfig config, int gamePort, String identityName) {
+        return manager(config, gamePort, identityName, "26.2");
+    }
+
+    private NetworkManager manager(NetworkConfig config, int gamePort, String identityName, String mcVersion) {
+        return manager(config, gamePort, identityName, mcVersion, "test");
+    }
+
+    private NetworkManager manager(NetworkConfig config, int gamePort, String identityName, String mcVersion,
+                                   String pluginVersion) {
+        NetworkManager manager = new NetworkManager(LOGGER, new NetworkManager.Options( config, mcVersion, pluginVersion, gamePort,
+            tempDir.resolve(identityName), BukkitJsonDocuments.INSTANCE, ClientVersion.getLatest().getProtocolVersion()));
+        managers.add(manager);
+        return manager;
+    }
+
+    private static MinecraftStatusBridge.StatusPacket statusPacket(String sourceServer, String targetServer,
+                                                                    int protocolVersion, String mcVersion,
+                                                                    String pluginVersion) throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("Ed25519");
+        KeyPair keyPair = generator.generateKeyPair();
+        return MinecraftStatusBridge.create(sourceServer, targetServer, protocolVersion, mcVersion, pluginVersion,
+            "127.0.0.1", 25565, null, "127.0.0.1", 8901, keyPair.getPublic().getEncoded(), keyPair.getPrivate(), WireCapability.localSet(), 0L, List.of());
+    }
+
+    private static void assertStatusPacketRejected(NetworkManager manager, String sourceServer,
+                                                   MinecraftStatusBridge.StatusPacket packet) {
+        assertNull(manager.handleStatusBridgeRequest(packet));
+        assertFalse(manager.isPeerReady(sourceServer));
+    }
+
+    private static void assertStatusResponseRejected(NetworkManager manager, String sourceServer,
+                                                     MinecraftStatusBridge.StatusPacket packet) {
+        assertFalse(manager.handleStatusBridgeResponse(sourceServer, packet, 1L));
+        assertFalse(manager.isPeerReady(sourceServer));
+    }
+
+    private static PortalInfo portalInfo(UUID id, boolean open) {
+        return new PortalInfo(id, "Gateway test", "world", "GATEWAY", open, "N", "E", "U",
+            10.5D, 64.0D, 20.5D,
+            9.5D, 63.5D, 19.5D,
+            11.5D, 66.5D, 21.5D);
+    }
+
+    private static WireTraversive traversive() {
+        return new WireTraversive("N", "E", "U",
+            10.5D, 64.0D, 20.5D,
+            10.5D, 64.0D, 20.5D,
+            0.0D, 0.0D, 1.0D,
+            0.0D, 0.0D, 1.0D,
+            true);
+    }
+
+    @Test
+    void localNameUsesConfiguredServerNameWhenPresent() {
+        NetworkConfig named = config(8901, "");
+        named.serverName = "hub";
+        NetworkManager namedManager = manager(named, 25565, "named");
+        assertEquals("hub", namedManager.getLocalName());
+
+        NetworkManager defaultPort = manager(config(8902, ""), 25565, "default");
+        String defaultName = defaultPort.getLocalName();
+        assertTrue(defaultName.startsWith("wh-"));
+
+        NetworkManager defaultPortReloaded = manager(config(8903, ""), 25565, "default");
+        assertEquals(defaultName, defaultPortReloaded.getLocalName());
+
+        NetworkManager customPort = manager(config(8904, ""), 25566, "custom");
+        assertTrue(customPort.getLocalName().startsWith("wh-"));
+        assertNotEquals(defaultName, customPort.getLocalName());
+    }
+
+    @Test
+    void twoManagersHandshakeAndReachReady() throws IOException {
+        int portA = freePort();
+        int portB = freePort();
+        NetworkManager alpha = manager(config(portA, ALPHA_NAME), ALPHA_GAME_PORT, "alpha");
+        NetworkManager beta = manager(config(portB, BETA_NAME), BETA_GAME_PORT, "beta");
+        alpha.savePeer(route(BETA_NAME, portB));
+        beta.savePeer(route(ALPHA_NAME, portA));
+
+        startAndDial(alpha, beta);
+
+        awaitTrue("alpha sees beta READY", () -> alpha.isPeerReady(BETA_NAME), 10_000L);
+        awaitTrue("beta sees alpha READY", () -> beta.isPeerReady(ALPHA_NAME), 10_000L);
+    }
+
+    @Test
+    void mismatchedMinecraftVersionsRejectTheLink() throws IOException {
+        Logger peerLog = Logger.getLogger("Wormholes");
+        List<String> warnings = captureWarnings(peerLog);
+        try {
+            int portA = freePort();
+            int portB = freePort();
+            NetworkManager alpha = manager(config(portA, ALPHA_NAME), ALPHA_GAME_PORT, "mc-mismatch-alpha", "26.2");
+            NetworkManager beta = manager(config(portB, BETA_NAME), BETA_GAME_PORT, "mc-mismatch-beta", "26.1.2");
+            alpha.savePeer(route(BETA_NAME, portB));
+            beta.savePeer(route(ALPHA_NAME, portA));
+
+            startAndDial(alpha, beta);
+
+            awaitTrue("acceptor logs the MC version rejection", () -> warnings.stream().anyMatch(message ->
+                message.contains("linked servers must run the same Minecraft version")
+                    && message.contains("26.1.2")
+                    && message.contains("26.2")), 10_000L);
+            assertFalse(alpha.isPeerReady(BETA_NAME));
+            assertFalse(beta.isPeerReady(ALPHA_NAME));
+        } finally {
+            releaseWarnings(peerLog);
+        }
+    }
+
+    @Test
+    void statusSidebandRejectsIncompatiblePeersBeforeReadinessOrDiscovery() throws Exception {
+        NetworkConfig exactConfig = config(freePort(), BETA_NAME);
+        exactConfig.pluginVersionPolicy = NetworkConfig.PLUGIN_VERSION_POLICY_EXACT;
+        NetworkManager beta = manager(exactConfig, BETA_GAME_PORT, "status-admission-beta", "26.2", "test");
+        beta.start();
+
+        assertStatusPacketRejected(beta, "wire-mismatch",
+            statusPacket("wire-mismatch", BETA_NAME, WireCodec.MIN_COMPATIBLE_PROTOCOL - 1, "26.2", "test"));
+        assertStatusPacketRejected(beta, "mc-mismatch",
+            statusPacket("mc-mismatch", BETA_NAME, WireCodec.PROTOCOL_VERSION, "26.1.2", "test"));
+        assertStatusPacketRejected(beta, "plugin-mismatch",
+            statusPacket("plugin-mismatch", BETA_NAME, WireCodec.PROTOCOL_VERSION, "26.2", "other"));
+
+        assertStatusResponseRejected(beta, "response-wire-mismatch",
+            statusPacket("response-wire-mismatch", BETA_NAME, WireCodec.MIN_COMPATIBLE_PROTOCOL - 1, "26.2", "test"));
+        assertStatusResponseRejected(beta, "response-mc-mismatch",
+            statusPacket("response-mc-mismatch", BETA_NAME, WireCodec.PROTOCOL_VERSION, "26.1.2", "test"));
+        assertStatusResponseRejected(beta, "response-plugin-mismatch",
+            statusPacket("response-plugin-mismatch", BETA_NAME, WireCodec.PROTOCOL_VERSION, "26.2", "other"));
+
+        assertEquals(0, beta.knownPeerCount());
+    }
+
+    @Test
+    void uncheckedMessageHandlerFailureClosesConnection() throws IOException {
+        int portA = freePort();
+        int portB = freePort();
+        NetworkManager alpha = manager(config(portA, ALPHA_NAME), ALPHA_GAME_PORT, "handler-alpha");
+        NetworkManager beta = manager(config(portB, BETA_NAME), BETA_GAME_PORT, "handler-beta");
+        alpha.savePeer(route(BETA_NAME, portB));
+        startAndDial(alpha, beta);
+        awaitTrue("alpha raw-connected to beta", () -> alpha.isRawPeerReady(BETA_NAME), 10_000L);
+        awaitTrue("beta raw-connected to alpha", () -> beta.isRawPeerReady(ALPHA_NAME), 10_000L);
+
+        PeerConnection connection = beta.links().ready(ALPHA_NAME);
+        assertNotNull(connection);
+        beta.setMessageSink((peerName, message) -> {
+            throw new IllegalStateException("message handler failed");
+        });
+        assertTrue(alpha.send(BETA_NAME, new WireMessage.PortalDirectory(List.of())));
+
+        awaitTrue("failed handler closes connection", () -> connection.getState() == PeerConnection.State.CLOSED, 10_000L);
+    }
+
+    @Test
+    void udsHotloadRestartsListenerForToggleAndDirectoryChange() throws IOException {
+        assumeTrue(udsSupported(), "UNIX domain sockets unsupported on this JVM");
+        int listenPort = freePort();
+        Path firstDirectory = tempDir.resolve("uds-first");
+        Path secondDirectory = tempDir.resolve("uds-second");
+        NetworkConfig initial = config(listenPort, ALPHA_NAME);
+        initial.transport.udsEnabled = false;
+        initial.transport.udsDir = firstDirectory.toString();
+        NetworkManager alpha = manager(initial, ALPHA_GAME_PORT, "uds-hotload");
+        alpha.start();
+
+        NetworkConfig enabled = config(listenPort, ALPHA_NAME);
+        enabled.transport.udsEnabled = true;
+        enabled.transport.udsDir = firstDirectory.toString();
+        Path firstSocket = alpha.dialer().localSocketPath(enabled);
+        alpha.applyConfig(enabled);
+        awaitTrue("enabled UDS socket appears", () -> Files.exists(firstSocket), 5_000L);
+
+        NetworkConfig moved = config(listenPort, ALPHA_NAME);
+        moved.transport.udsEnabled = true;
+        moved.transport.udsDir = secondDirectory.toString();
+        Path secondSocket = alpha.dialer().localSocketPath(moved);
+        alpha.applyConfig(moved);
+        awaitTrue("old UDS socket disappears", () -> !Files.exists(firstSocket), 5_000L);
+        awaitTrue("moved UDS socket appears", () -> Files.exists(secondSocket), 5_000L);
+    }
+
+    @Test
+    void trustedPeerRejectsChangedPublicKey() throws IOException {
+        int portA = freePort();
+        int portB = freePort();
+        NetworkConfig alphaConfig = config(portA, ALPHA_NAME);
+        NetworkConfig betaConfig = config(portB, BETA_NAME);
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "alpha");
+        NetworkManager beta = manager(betaConfig, BETA_GAME_PORT, "beta");
+        alpha.savePeer(route(BETA_NAME, portB));
+        beta.savePeer(route(ALPHA_NAME, portA));
+
+        startAndDial(alpha, beta);
+        awaitTrue("initial connect", () -> alpha.isPeerReady(BETA_NAME), 10_000L);
+
+        beta.stop();
+        awaitTrue("alpha notices disconnect", () -> !alpha.isPeerReady(BETA_NAME), 10_000L);
+
+        NetworkManager impostor = manager(betaConfig, BETA_GAME_PORT, "beta-impostor");
+        impostor.start();
+        alpha.dialer().resetDialState(BETA_NAME);
+
+        awaitDialed("alpha refuses the impostor's public key", () -> {
+            String error = alpha.dialer().lastError(BETA_NAME);
+            return error != null && error.contains("unexpected public key");
+        }, 10_000L, alpha);
+        assertFalse(alpha.isPeerReady(BETA_NAME));
+        assertFalse(alpha.isRawPeerReady(BETA_NAME));
+    }
+
+    @Test
+    void singleSidedConfigConnectsAndLearnsPeerAddresses() throws IOException {
+        int portAlpha = freePort();
+        int portZulu = freePort();
+
+        NetworkConfig alphaConfig = config(portAlpha, ALPHA_NAME);
+        NetworkConfig zuluConfig = config(portZulu, ZULU_NAME);
+
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "alpha");
+        NetworkManager zulu = manager(zuluConfig, 25599, "zulu");
+        zulu.savePeer(route(ALPHA_NAME, portAlpha));
+
+        startAndDial(alpha, zulu);
+
+        awaitTrue("zulu connects to alpha", () -> zulu.isPeerReady(ALPHA_NAME), 10_000L);
+        awaitTrue("alpha accepts unconfigured zulu", () -> alpha.isPeerReady(ZULU_NAME), 10_000L);
+
+        NetworkConfig.PeerEntry learned = alpha.getPeer(ZULU_NAME);
+        assertTrue(learned != null && learned.host.equals("127.0.0.1") && learned.port == portZulu && learned.publicPort == 25599,
+            "alpha should learn zulu's addresses from the handshake, got " + (learned == null ? "null" : learned.host + ":" + learned.port + "/" + learned.publicPort));
+    }
+
+    @Test
+    void outboundOnlyBoatConnectsToAnchor() throws IOException {
+        int portAnchor = freePort();
+        int unusedBoatPort = freePort();
+        NetworkConfig anchorConfig = config(portAnchor, ALPHA_NAME);
+        NetworkConfig boatConfig = config(unusedBoatPort, BETA_NAME);
+        boatConfig.listenEnabled = false;
+
+        NetworkManager anchor = manager(anchorConfig, ALPHA_GAME_PORT, "anchor");
+        NetworkManager boat = manager(boatConfig, BETA_GAME_PORT, "boat");
+        boat.savePeer(route(ALPHA_NAME, portAnchor));
+
+        startAndDial(anchor, boat);
+
+        try {
+            awaitTrue("boat reaches anchor", () -> boat.isPeerReady(ALPHA_NAME), 10_000L);
+        } catch (AssertionError failure) {
+            throw new AssertionError("Boat dial error: " + boat.dialer().lastError(ALPHA_NAME)
+                + "; boat pending=" + boat.links().pendingCount() + "; anchor pending=" + anchor.links().pendingCount()
+                + "; boat status=" + boat.status() + "; anchor status=" + anchor.status(), failure);
+        }
+        awaitTrue("anchor accepts boat", () -> anchor.isPeerReady(BETA_NAME), 10_000L);
+    }
+
+    @Test
+    void anchorRelaysPortalDirectoriesAndRoutedTrafficBetweenBoats() throws IOException, InterruptedException {
+        int anchorPort = freePort();
+        int boatAPort = freePort();
+        int boatBPort = freePort();
+
+        NetworkConfig anchorConfig = config(anchorPort, "anchor");
+        anchorConfig.serverName = "anchor";
+
+        NetworkConfig boatAConfig = config(boatAPort, "boat-a");
+        boatAConfig.serverName = "boat-a";
+        boatAConfig.listenEnabled = false;
+
+        NetworkConfig boatBConfig = config(boatBPort, "boat-b");
+        boatBConfig.serverName = "boat-b";
+        boatBConfig.listenEnabled = false;
+
+        NetworkManager anchor = manager(anchorConfig, 25565, "relay-anchor");
+        NetworkManager boatA = manager(boatAConfig, 25566, "relay-boat-a");
+        NetworkManager boatB = manager(boatBConfig, 25567, "relay-boat-b");
+        boatA.trustPeer("boat-b", boatB.getPublicKey());
+        boatB.trustPeer("boat-a", boatA.getPublicKey());
+        boatA.savePeer(route("anchor", anchorPort));
+        boatB.savePeer(route("anchor", anchorPort));
+        LinkedBlockingQueue<String> boatBMessages = new LinkedBlockingQueue<>();
+        LinkedBlockingQueue<String> boatAMessages = new LinkedBlockingQueue<>();
+        boatB.setMessageSink((peerName, message) -> {
+            if (message instanceof WireMessage.PortalDirectory) {
+                boatBMessages.offer(peerName + ":" + message.type());
+            }
+        });
+        boatA.setMessageSink((peerName, message) -> {
+            if (message instanceof WireMessage.ViewSubscribe subscribe) {
+                boatAMessages.offer(peerName + ":" + subscribe.portalId());
+            }
+        });
+
+        startAndDial(anchor, boatA, boatB);
+
+        awaitTrue("boat A reaches anchor", () -> boatA.isPeerReady("anchor"), 10_000L);
+        awaitTrue("boat B reaches anchor", () -> boatB.isPeerReady("anchor"), 10_000L);
+        awaitTrue("anchor sees boat A", () -> anchor.isPeerReady("boat-a"), 10_000L);
+        awaitTrue("anchor sees boat B", () -> anchor.isPeerReady("boat-b"), 10_000L);
+
+        assertTrue(boatA.send("anchor", new WireMessage.PortalDirectory(List.of())));
+        assertEquals("boat-a:PORTAL_DIRECTORY", boatBMessages.poll(10L, TimeUnit.SECONDS));
+
+        UUID portalId = UUID.randomUUID();
+        assertTrue(boatB.send("boat-a", new WireMessage.ViewSubscribe(portalId, 0)));
+        assertEquals("boat-b:" + portalId, boatAMessages.poll(10L, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void sidebandOnlyAnchorForwardsRoutedTrafficBetweenPeers() throws IOException, InterruptedException {
+        int rawAlpha = freePort();
+        int rawBeta = freePort();
+        int rawGamma = freePort();
+        int gameAlpha = freePort();
+        int gameBeta = freePort();
+        int gameGamma = freePort();
+
+        NetworkConfig alphaConfig = config(rawAlpha, ALPHA_NAME);
+        alphaConfig.listenEnabled = false;
+        NetworkConfig betaConfig = config(rawBeta, BETA_NAME);
+        betaConfig.listenEnabled = false;
+        NetworkConfig gammaConfig = config(rawGamma, "gamma");
+        gammaConfig.listenEnabled = false;
+
+        NetworkManager alpha = manager(alphaConfig, gameAlpha, "sideband-relay-alpha");
+        NetworkManager beta = manager(betaConfig, gameBeta, "sideband-relay-beta");
+        NetworkManager gamma = manager(gammaConfig, gameGamma, "sideband-relay-gamma");
+        alpha.trustPeer("gamma", gamma.getPublicKey());
+        gamma.trustPeer(ALPHA_NAME, alpha.getPublicKey());
+        alpha.savePeer(sidebandRoute(BETA_NAME, rawBeta, gameBeta));
+        beta.savePeer(sidebandRoute(ALPHA_NAME, rawAlpha, gameAlpha));
+        beta.savePeer(sidebandRoute("gamma", rawGamma, gameGamma));
+        gamma.savePeer(sidebandRoute(BETA_NAME, rawBeta, gameBeta));
+
+        alpha.nextStatusAttempt.put(BETA_NAME, Long.MAX_VALUE);
+        beta.nextStatusAttempt.put(ALPHA_NAME, Long.MAX_VALUE);
+        beta.nextStatusAttempt.put("gamma", Long.MAX_VALUE);
+        gamma.nextStatusAttempt.put(BETA_NAME, Long.MAX_VALUE);
+        alpha.statusPollInFlight.add(BETA_NAME);
+        beta.statusPollInFlight.add(ALPHA_NAME);
+        beta.statusPollInFlight.add("gamma");
+        gamma.statusPollInFlight.add(BETA_NAME);
+
+        LinkedBlockingQueue<String> received = new LinkedBlockingQueue<>();
+        gamma.setMessageSink((peerName, message) -> {
+            if (message instanceof WireMessage.ViewTime time) {
+                received.offer(peerName + ":" + time.portalId() + ":" + time.skyDarken());
+            }
+        });
+
+        startAndDial(alpha, beta, gamma);
+
+        assertTrue(gamma.send(BETA_NAME, new WireMessage.PortalDirectory(List.of())));
+        exchangeSideband(gamma, BETA_NAME, beta);
+        exchangeSideband(alpha, BETA_NAME, beta);
+
+        alpha.statusPollInFlight.add(BETA_NAME);
+        alpha.nextStatusAttempt.put(BETA_NAME, Long.MAX_VALUE);
+        assertTrue(alpha.send("gamma", new WireMessage.ViewSubscribe(UUID.randomUUID(), 0)));
+        assertEquals(0L, alpha.nextStatusAttempt.get(BETA_NAME));
+
+        UUID portalId = UUID.randomUUID();
+        assertTrue(alpha.send("gamma", new WireMessage.ViewTime(portalId, 7)),
+            "alpha must learn gamma's route through beta from the relayed directory");
+        exchangeSideband(alpha, BETA_NAME, beta);
+        exchangeSideband(gamma, BETA_NAME, beta);
+
+        assertEquals(ALPHA_NAME + ":" + portalId + ":7", received.poll(10L, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void sidebandRelayRejectionRejectsTheInboundPollBatch() throws IOException {
+        NetworkConfig betaConfig = config(freePort(), BETA_NAME);
+        betaConfig.listenEnabled = false;
+        NetworkManager alpha = manager(config(freePort(), ALPHA_NAME), ALPHA_GAME_PORT, "relay-reject-alpha");
+        NetworkManager beta = manager(betaConfig, BETA_GAME_PORT, "relay-reject-beta");
+        beta.start();
+        UUID portalId = UUID.randomUUID();
+        WireMessage.ViewTime inner = new WireMessage.ViewTime(portalId, 9);
+        WireMessage.Routed routed = alpha.relay().createRouted("missing-target", 4, inner);
+        MinecraftStatusBridge.EncodedMessage encoded = new MinecraftStatusBridge.EncodedMessage(
+            routed,
+            WireCodec.encodeFrame(routed)
+        );
+        MinecraftStatusBridge.StatusPacket request = alpha.createStatusBridgePacket(BETA_NAME, List.of(encoded));
+
+        assertNull(beta.handleStatusBridgeRequest(request));
+    }
+
+    @Test
+    void sidebandRelayRejectionRejectsTheResponseBatch() throws IOException {
+        NetworkManager alpha = manager(config(freePort(), ALPHA_NAME), ALPHA_GAME_PORT, "relay-response-alpha");
+        NetworkManager beta = manager(config(freePort(), BETA_NAME), BETA_GAME_PORT, "relay-response-beta");
+        WireMessage.ViewTime inner = new WireMessage.ViewTime(UUID.randomUUID(), 11);
+        WireMessage.Routed routed = beta.relay().createRouted("missing-target", 4, inner);
+        MinecraftStatusBridge.EncodedMessage encoded = new MinecraftStatusBridge.EncodedMessage(
+            routed,
+            WireCodec.encodeFrame(routed)
+        );
+        MinecraftStatusBridge.StatusPacket response = beta.createStatusBridgePacket(ALPHA_NAME, List.of(encoded));
+
+        assertFalse(alpha.handleStatusBridgeResponse(BETA_NAME, response, 1L));
+    }
+
+    @Test
+    void sidebandFragmentAssemblySaturationRejectsTheNewBatch() throws IOException {
+        NetworkConfig alphaConfig = config(freePort(), ALPHA_NAME);
+        NetworkConfig betaConfig = config(freePort(), BETA_NAME);
+        alphaConfig.listenEnabled = false;
+        betaConfig.listenEnabled = false;
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "fragment-cap-alpha");
+        NetworkManager beta = manager(betaConfig, BETA_GAME_PORT, "fragment-cap-beta");
+        alpha.statusPollInFlight.add(BETA_NAME);
+        beta.statusPollInFlight.add(ALPHA_NAME);
+        alpha.start();
+        beta.start();
+        for (long messageId = 0L; messageId < 128L; messageId++) {
+            WireMessage.SidebandFragment fragment = new WireMessage.SidebandFragment(
+                messageId,
+                0,
+                2,
+                SidebandFragmenter.CHUNK_BYTES * 2,
+                new byte[SidebandFragmenter.CHUNK_BYTES]
+            );
+            MinecraftStatusBridge.EncodedMessage encoded = new MinecraftStatusBridge.EncodedMessage(
+                fragment,
+                WireCodec.encodeFrame(fragment)
+            );
+            MinecraftStatusBridge.StatusPacket request = alpha.createStatusBridgePacket(BETA_NAME, List.of(encoded));
+            MinecraftStatusBridge.StatusPacket response = beta.handleStatusBridgeRequest(request);
+            assertNotNull(response);
+            assertTrue(alpha.handleStatusBridgeResponse(BETA_NAME, response, 1L));
+            assertEquals(messageId + 1, beta.fragmenter().assemblyCount());
+            if (messageId == 0L) {
+                assertTrue(beta.send(ALPHA_NAME, new WireMessage.ViewTime(UUID.randomUUID(), 11)));
+            }
+        }
+        WireMessage.SidebandFragment overflow = new WireMessage.SidebandFragment(
+            128L,
+            0,
+            2,
+            SidebandFragmenter.CHUNK_BYTES * 2,
+            new byte[SidebandFragmenter.CHUNK_BYTES]
+        );
+        MinecraftStatusBridge.EncodedMessage overflowEncoded = new MinecraftStatusBridge.EncodedMessage(
+            overflow,
+            WireCodec.encodeFrame(overflow)
+        );
+        MinecraftStatusBridge.StatusPacket overflowRequest = alpha.createStatusBridgePacket(
+            BETA_NAME,
+            List.of(overflowEncoded)
+        );
+
+        assertNull(beta.handleStatusBridgeRequest(overflowRequest));
+    }
+
+    @Test
+    void savedPeerRoutePersistsAndDialsWithoutConfiguredPeer() throws IOException {
+        int portA = freePort();
+        int portB = freePort();
+        NetworkConfig alphaConfig = config(portA, ALPHA_NAME);
+        NetworkConfig betaConfig = config(portB, BETA_NAME);
+        NetworkConfig.PeerEntry route = new NetworkConfig.PeerEntry();
+        route.name = BETA_NAME;
+        route.host = "127.0.0.1";
+        route.port = portB;
+        route.publicHost = "127.0.0.1";
+        route.publicPort = BETA_GAME_PORT;
+
+        NetworkManager routeWriter = manager(alphaConfig, ALPHA_GAME_PORT, "route-alpha");
+        routeWriter.savePeer(route);
+        routeWriter.stop();
+
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "route-alpha");
+        NetworkManager beta = manager(betaConfig, BETA_GAME_PORT, "route-beta");
+        startAndDial(alpha, beta);
+
+        awaitTrue("alpha reaches beta through saved route", () -> alpha.isPeerReady(BETA_NAME), 10_000L);
+        awaitTrue("beta accepts alpha without configured peer", () -> beta.isPeerReady(ALPHA_NAME), 10_000L);
+        assertTrue(alpha.getPeer(BETA_NAME) != null);
+    }
+
+    @Test
+    void diagnosticsExplainSeparateWormholesPort() {
+        NetworkConfig alphaConfig = config(8901, ALPHA_NAME);
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "diagnostic-alpha");
+        alpha.savePeer(route(BETA_NAME, 8902));
+        List<String> diagnostics = alpha.diagnostics();
+        assertTrue(diagnostics.stream().anyMatch(message -> message.contains("status sideband")));
+        assertTrue(diagnostics.stream().anyMatch(message -> message.contains("raw port")));
+    }
+
+    @Test
+    void statusSidebandExchangesQueuedMessagesAfterTrust() throws IOException, InterruptedException {
+        int rawAlpha = freePort();
+        int rawBeta = freePort();
+        NetworkConfig alphaConfig = config(rawAlpha, ALPHA_NAME);
+        alphaConfig.listenEnabled = false;
+        NetworkConfig.PeerEntry betaRoute = route(BETA_NAME, rawBeta);
+        betaRoute.publicHost = "127.0.0.1";
+        betaRoute.publicPort = BETA_GAME_PORT;
+
+        NetworkConfig betaConfig = config(rawBeta, BETA_NAME);
+        betaConfig.listenEnabled = false;
+        NetworkConfig.PeerEntry alphaRoute = route(ALPHA_NAME, rawAlpha);
+        alphaRoute.publicHost = "127.0.0.1";
+        alphaRoute.publicPort = ALPHA_GAME_PORT;
+
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "status-alpha");
+        NetworkManager beta = manager(betaConfig, BETA_GAME_PORT, "status-beta");
+        alpha.savePeer(betaRoute);
+        beta.savePeer(alphaRoute);
+        LinkedBlockingQueue<String> betaMessages = new LinkedBlockingQueue<>();
+        beta.setMessageSink((peerName, message) -> {
+            if (message instanceof WireMessage.PortalDirectory) {
+                betaMessages.offer(peerName + ":" + message.type());
+            }
+        });
+        startAndDial(alpha, beta);
+
+        assertTrue(alpha.send(BETA_NAME, new WireMessage.PortalDirectory(List.of())));
+        MinecraftStatusBridge.StatusPacket request = beta.createStatusBridgePacket(ALPHA_NAME, List.of());
+        MinecraftStatusBridge.StatusPacket response = alpha.handleStatusBridgeRequest(request);
+
+        assertTrue(alpha.isPeerReady(BETA_NAME));
+        assertTrue(beta.handleStatusBridgeResponse(ALPHA_NAME, response, 12L));
+        assertTrue(beta.isPeerReady(ALPHA_NAME));
+        assertEquals(ALPHA_NAME + ":PORTAL_DIRECTORY", betaMessages.poll(10L, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void statusSidebandPrioritizesEssentialOverEntitySpam() throws IOException, InterruptedException {
+        int rawAlpha = freePort();
+        int rawBeta = freePort();
+        NetworkConfig alphaConfig = config(rawAlpha, ALPHA_NAME);
+        alphaConfig.listenEnabled = false;
+        NetworkConfig.PeerEntry betaRoute = route(BETA_NAME, rawBeta);
+        betaRoute.publicHost = "127.0.0.1";
+        betaRoute.publicPort = BETA_GAME_PORT;
+
+        NetworkConfig betaConfig = config(rawBeta, BETA_NAME);
+        betaConfig.listenEnabled = false;
+        NetworkConfig.PeerEntry alphaRoute = route(ALPHA_NAME, rawAlpha);
+        alphaRoute.publicHost = "127.0.0.1";
+        alphaRoute.publicPort = ALPHA_GAME_PORT;
+
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "shed-alpha");
+        NetworkManager beta = manager(betaConfig, BETA_GAME_PORT, "shed-beta");
+        alpha.savePeer(betaRoute);
+        beta.savePeer(alphaRoute);
+        LinkedBlockingQueue<String> betaEssential = new LinkedBlockingQueue<>();
+        beta.setMessageSink((peerName, message) -> {
+            if (message instanceof WireMessage.PortalDirectory) {
+                betaEssential.offer(peerName + ":" + message.type());
+            }
+        });
+        startAndDial(alpha, beta);
+
+        for (int i = 0; i < 4000; i++) {
+            alpha.send(BETA_NAME, new WireMessage.ViewEntities(UUID.randomUUID(), List.of(), List.of()));
+        }
+        assertTrue(alpha.send(BETA_NAME, new WireMessage.PortalDirectory(List.of())),
+            "essential terrain/control traffic must enqueue even when entity spam has flooded the sideband outbox");
+
+        String received = null;
+        for (int i = 0; i < 96 && received == null; i++) {
+            MinecraftStatusBridge.StatusPacket request = beta.createStatusBridgePacket(ALPHA_NAME, List.of());
+            MinecraftStatusBridge.StatusPacket response = alpha.handleStatusBridgeRequest(request);
+            assertTrue(response != null);
+            assertTrue(beta.handleStatusBridgeResponse(ALPHA_NAME, response, 12L));
+            received = betaEssential.poll();
+        }
+        assertEquals(ALPHA_NAME + ":PORTAL_DIRECTORY", received,
+            "essential message must survive and be delivered despite best-effort entity spam");
+    }
+
+    @Test
+    void statusSidebandRetriesSameNonceBeforeRequeue() throws IOException {
+        int rawAlpha = freePort();
+        NetworkConfig alphaConfig = config(rawAlpha, ALPHA_NAME);
+        alphaConfig.listenEnabled = false;
+        try (ServerSocket rejector = new ServerSocket(0, 50, InetAddress.getLoopbackAddress())) {
+            Thread closer = new Thread(() -> {
+                while (true) {
+                    try {
+                        rejector.accept().close();
+                    } catch (IOException e) {
+                        return;
+                    }
+                }
+            });
+            closer.setDaemon(true);
+            closer.start();
+
+            NetworkConfig.PeerEntry betaRoute = route(BETA_NAME, freePort());
+            betaRoute.publicHost = "127.0.0.1";
+            betaRoute.publicPort = rejector.getLocalPort();
+
+            NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "retry-alpha");
+            alpha.savePeer(betaRoute);
+            alpha.statusPollInFlight.add(BETA_NAME);
+            alpha.start();
+
+            WireMessage.EntityTransfer transfer = new WireMessage.EntityTransfer(UUID.randomUUID(), UUID.randomUUID(), new byte[64], traversive());
+            assertTrue(alpha.send(BETA_NAME, transfer));
+
+            assertFalse(alpha.pollStatusBridgeOnce(betaRoute));
+            NetworkManager.PendingStatusRequest first = alpha.pendingStatusRequests.get(BETA_NAME);
+            assertNotNull(first, "a post-connect poll failure inside the retry window must keep the pending request parked for a same-nonce retry");
+            assertFalse(first.messages().isEmpty());
+            long nonce = first.packet().nonce();
+
+            assertFalse(alpha.pollStatusBridgeOnce(betaRoute));
+            NetworkManager.PendingStatusRequest second = alpha.pendingStatusRequests.get(BETA_NAME);
+            assertNotNull(second);
+            assertEquals(nonce, second.packet().nonce(), "retries inside the retry window must reuse the same packet nonce so the peer can deduplicate redelivered requests");
+
+            alpha.pendingStatusRequests.put(BETA_NAME, new NetworkManager.PendingStatusRequest(second.packet(), second.batch(), second.messages(), System.currentTimeMillis() - NetworkManager.STATUS_REQUEST_RETRY_TTL_MS));
+            assertFalse(alpha.pollStatusBridgeOnce(betaRoute));
+            assertNull(alpha.pendingStatusRequests.get(BETA_NAME), "a poll failure past the retry window must abandon the pending request so the peer outbox cannot park forever");
+
+            assertFalse(alpha.pollStatusBridgeOnce(betaRoute));
+            NetworkManager.PendingStatusRequest redrained = alpha.pendingStatusRequests.get(BETA_NAME);
+            assertNotNull(redrained, "an abandoned request must requeue its batch so the next poll re-drains it");
+            assertFalse(redrained.messages().isEmpty(), "requeued messages must survive back into the outbox");
+            assertNotEquals(nonce, redrained.packet().nonce());
+        }
+    }
+
+    @Test
+    void statusSidebandRequeuesImmediatelyWhenPeerUnreachable() throws IOException {
+        int rawAlpha = freePort();
+        NetworkConfig alphaConfig = config(rawAlpha, ALPHA_NAME);
+        alphaConfig.listenEnabled = false;
+        NetworkConfig.PeerEntry betaRoute = route(BETA_NAME, freePort());
+        betaRoute.publicHost = "127.0.0.1";
+        betaRoute.publicPort = freePort();
+
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "unreachable-alpha");
+        alpha.savePeer(betaRoute);
+        alpha.statusPollInFlight.add(BETA_NAME);
+        alpha.start();
+
+        WireMessage.EntityTransfer transfer = new WireMessage.EntityTransfer(UUID.randomUUID(), UUID.randomUUID(), new byte[64], traversive());
+        assertTrue(alpha.send(BETA_NAME, transfer));
+
+        assertFalse(alpha.pollStatusBridgeOnce(betaRoute));
+        assertNull(alpha.pendingStatusRequests.get(BETA_NAME), "a connect failure means the request was never delivered, so the batch must requeue immediately instead of parking the outbox");
+    }
+
+    @Test
+    void statusSidebandFragmentsJumboFrames() throws IOException, InterruptedException {
+        int rawAlpha = freePort();
+        int rawBeta = freePort();
+        NetworkConfig alphaConfig = config(rawAlpha, ALPHA_NAME);
+        alphaConfig.listenEnabled = false;
+        NetworkConfig.PeerEntry betaRoute = route(BETA_NAME, rawBeta);
+        betaRoute.publicHost = "127.0.0.1";
+        betaRoute.publicPort = rawBeta;
+
+        NetworkConfig betaConfig = config(rawBeta, BETA_NAME);
+        betaConfig.listenEnabled = false;
+        NetworkConfig.PeerEntry alphaRoute = route(ALPHA_NAME, rawAlpha);
+        alphaRoute.publicHost = "127.0.0.1";
+        alphaRoute.publicPort = rawAlpha;
+
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "jumbo-alpha");
+        NetworkManager beta = manager(betaConfig, BETA_GAME_PORT, "jumbo-beta");
+        alpha.savePeer(betaRoute);
+        beta.savePeer(alphaRoute);
+        LinkedBlockingQueue<Integer> betaTransfers = new LinkedBlockingQueue<>();
+        beta.setMessageSink((peerName, message) -> {
+            if (message instanceof WireMessage.EntityTransfer transfer) {
+                betaTransfers.offer(transfer.entitySnapshot().length);
+            }
+        });
+        startAndDial(alpha, beta);
+
+        byte[] snapshot = new byte[70_000];
+        new Random(42L).nextBytes(snapshot);
+        WireMessage.EntityTransfer transfer = new WireMessage.EntityTransfer(UUID.randomUUID(), UUID.randomUUID(), snapshot, traversive());
+        assertTrue(WireCodec.encodeFrame(transfer).length > MinecraftStatusBridge.MAX_FRAME_BYTES);
+        assertTrue(alpha.send(BETA_NAME, transfer));
+
+        long deadline = System.currentTimeMillis() + 10_000L;
+        while (betaTransfers.isEmpty() && System.currentTimeMillis() < deadline) {
+            MinecraftStatusBridge.StatusPacket request = beta.createStatusBridgePacket(ALPHA_NAME, List.of());
+            MinecraftStatusBridge.StatusPacket response = alpha.handleStatusBridgeRequest(request);
+            assertTrue(response != null);
+            assertTrue(beta.handleStatusBridgeResponse(ALPHA_NAME, response, 12L));
+            Thread.sleep(10L);
+        }
+        assertEquals(snapshot.length, betaTransfers.poll(),
+            "a 70KB jumbo frame must fragment, ship and reassemble across sideband drain rounds before the pump deadline");
+    }
+
+    @Test
+    void statusSidebandCompressesCompressibleJumboFrames() throws IOException, InterruptedException {
+        int rawAlpha = freePort();
+        int rawBeta = freePort();
+        NetworkConfig alphaConfig = config(rawAlpha, ALPHA_NAME);
+        alphaConfig.listenEnabled = false;
+        NetworkConfig.PeerEntry betaRoute = route(BETA_NAME, rawBeta);
+        betaRoute.publicHost = "127.0.0.1";
+        betaRoute.publicPort = rawBeta;
+
+        NetworkConfig betaConfig = config(rawBeta, BETA_NAME);
+        betaConfig.listenEnabled = false;
+        NetworkConfig.PeerEntry alphaRoute = route(ALPHA_NAME, rawAlpha);
+        alphaRoute.publicHost = "127.0.0.1";
+        alphaRoute.publicPort = rawAlpha;
+
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "zip-alpha");
+        NetworkManager beta = manager(betaConfig, BETA_GAME_PORT, "zip-beta");
+        alpha.savePeer(betaRoute);
+        beta.savePeer(alphaRoute);
+        LinkedBlockingQueue<Integer> betaTransfers = new LinkedBlockingQueue<>();
+        beta.setMessageSink((peerName, message) -> {
+            if (message instanceof WireMessage.EntityTransfer transfer) {
+                betaTransfers.offer(transfer.entitySnapshot().length);
+            }
+        });
+        startAndDial(alpha, beta);
+
+        byte[] snapshot = new byte[240_000];
+        for (int i = 0; i < snapshot.length; i++) {
+            snapshot[i] = (byte) (i % 7);
+        }
+        WireMessage.EntityTransfer transfer = new WireMessage.EntityTransfer(UUID.randomUUID(), UUID.randomUUID(), snapshot, traversive());
+        assertTrue(alpha.send(BETA_NAME, transfer));
+
+        Integer received = null;
+        long deadline = System.currentTimeMillis() + 10_000L;
+        while (received == null && System.currentTimeMillis() < deadline) {
+            MinecraftStatusBridge.StatusPacket request = beta.createStatusBridgePacket(ALPHA_NAME, List.of());
+            MinecraftStatusBridge.StatusPacket response = alpha.handleStatusBridgeRequest(request);
+            assertTrue(response != null);
+            assertTrue(beta.handleStatusBridgeResponse(ALPHA_NAME, response, 12L));
+            received = betaTransfers.poll();
+            if (received == null) {
+                Thread.sleep(10L);
+            }
+        }
+        assertEquals(snapshot.length, received,
+            "a 240KB highly-compressible frame should compress small enough to cross the sideband before the pump deadline");
+    }
+
+    @Test
+    void statusSidebandJumboUsesConfiguredCompressionLevel() throws IOException {
+        NetworkConfig alphaConfig = config(freePort(), ALPHA_NAME);
+        alphaConfig.listenEnabled = false;
+        alphaConfig.transport.compressionLevel = 1;
+        NetworkConfig.PeerEntry betaRoute = sidebandRoute(BETA_NAME, freePort(), BETA_GAME_PORT);
+
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "jumbo-level-alpha");
+        alpha.savePeer(betaRoute);
+
+        byte[] seed = new byte[12_000];
+        new Random(42L).nextBytes(seed);
+        byte[] snapshot = new byte[seed.length * 10];
+        for (int offset = 0; offset < snapshot.length; offset += seed.length) {
+            System.arraycopy(seed, 0, snapshot, offset, seed.length);
+        }
+        WireMessage.EntityTransfer transfer = new WireMessage.EntityTransfer(UUID.randomUUID(), UUID.randomUUID(), snapshot, traversive());
+        byte[] plainFrame = WireCodec.encodeFrame(transfer);
+        assertTrue(plainFrame.length > MinecraftStatusBridge.MAX_FRAME_BYTES);
+        assertTrue(alpha.send(BETA_NAME, transfer));
+
+        List<WireMessage.SidebandFragment> fragments = new ArrayList<>();
+        List<MinecraftStatusBridge.EncodedMessage> drained = alpha.drainStatusOutbox(
+            BETA_NAME,
+            NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MAX_BYTES
+        );
+        while (!drained.isEmpty()) {
+            for (MinecraftStatusBridge.EncodedMessage encoded : drained) {
+                fragments.add(assertInstanceOf(WireMessage.SidebandFragment.class, encoded.message()));
+            }
+            drained = alpha.drainStatusOutbox(BETA_NAME, NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MAX_BYTES);
+        }
+        assertFalse(fragments.isEmpty());
+
+        byte[] actualCompressedFrame = new byte[fragments.get(0).frameLength()];
+        for (WireMessage.SidebandFragment fragment : fragments) {
+            System.arraycopy(fragment.chunk(), 0, actualCompressedFrame, fragment.index() * 4 * 1024, fragment.chunk().length);
+        }
+        byte[] expectedCompressedFrame = alpha.compression().encode(plainFrame, false);
+        byte[] formerHardCodedFrame = alpha.compression().encode(plainFrame, false, 12);
+        assertFalse(java.util.Arrays.equals(expectedCompressedFrame, formerHardCodedFrame),
+            "test fixture must distinguish configured level 1 from the former hard-coded level 12");
+        assertArrayEquals(expectedCompressedFrame, actualCompressedFrame,
+            "jumbo sideband compression must use the NetworkManager's configured transport level");
+    }
+
+    @Test
+    void statusSidebandDrainAlwaysTakesFirstOverBudgetFrame() throws IOException {
+        NetworkConfig alphaConfig = config(freePort(), ALPHA_NAME);
+        alphaConfig.listenEnabled = false;
+        NetworkConfig.PeerEntry betaRoute = route(BETA_NAME, freePort());
+        betaRoute.publicHost = "127.0.0.1";
+        betaRoute.publicPort = BETA_GAME_PORT;
+
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "drain-first-alpha");
+        alpha.savePeer(betaRoute);
+
+        byte[] snapshot = new byte[70_000];
+        new Random(42L).nextBytes(snapshot);
+        WireMessage.EntityTransfer transfer = new WireMessage.EntityTransfer(UUID.randomUUID(), UUID.randomUUID(), snapshot, traversive());
+        assertTrue(WireCodec.encodeFrame(transfer).length > MinecraftStatusBridge.MAX_FRAME_BYTES);
+        assertTrue(alpha.send(BETA_NAME, transfer));
+
+        List<MinecraftStatusBridge.EncodedMessage> drained = alpha.drainStatusOutbox(BETA_NAME, 1);
+        assertEquals(1, drained.size());
+        assertTrue(drained.get(0).frame().length > 1);
+    }
+
+    @Test
+    void statusSidebandRequestDrainShipsJumboFragmentsAtFloorBudget() throws IOException {
+        NetworkConfig alphaConfig = config(freePort(), ALPHA_NAME);
+        alphaConfig.listenEnabled = false;
+        NetworkConfig.PeerEntry betaRoute = route(BETA_NAME, freePort());
+        betaRoute.publicHost = "127.0.0.1";
+        betaRoute.publicPort = BETA_GAME_PORT;
+
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "drain-floor-alpha");
+        alpha.savePeer(betaRoute);
+
+        byte[] snapshot = new byte[70_000];
+        new Random(42L).nextBytes(snapshot);
+        WireMessage.EntityTransfer transfer = new WireMessage.EntityTransfer(UUID.randomUUID(), UUID.randomUUID(), snapshot, traversive());
+        assertTrue(WireCodec.encodeFrame(transfer).length > MinecraftStatusBridge.MAX_FRAME_BYTES);
+        assertTrue(alpha.send(BETA_NAME, transfer));
+
+        int drains = 0;
+        List<MinecraftStatusBridge.EncodedMessage> drained = alpha.drainStatusOutbox(BETA_NAME, NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MIN_BYTES);
+        while (!drained.isEmpty()) {
+            drains++;
+            assertTrue(drained.size() >= 1, "every non-terminal drain must ship at least one fragment");
+            assertTrue(drains <= 40, "jumbo fragments must fully ship within 40 floor-budget drains");
+            drained = alpha.drainStatusOutbox(BETA_NAME, NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MIN_BYTES);
+        }
+        assertTrue(drains > 1, "a jumbo frame must fragment across multiple floor-budget drains");
+    }
+
+    @Test
+    void statusSidebandRequestBudgetRampDoublesOnSuccessAndHalvesOnFailure() {
+        NetworkManager alpha = manager(config(8907, ALPHA_NAME), ALPHA_GAME_PORT, "budget-ramp");
+        assertEquals(4000, NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MIN_BYTES);
+        assertEquals(20_000, NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MAX_BYTES);
+        assertEquals(NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MIN_BYTES, alpha.statusRequestBudgetFor(BETA_NAME));
+        alpha.recordStatusRequestSuccess(BETA_NAME);
+        alpha.recordStatusRequestSuccess(BETA_NAME);
+        assertEquals(NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MIN_BYTES * 4, alpha.statusRequestBudgetFor(BETA_NAME));
+        alpha.recordStatusRequestSuccess(BETA_NAME);
+        assertEquals(NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MAX_BYTES, alpha.statusRequestBudgetFor(BETA_NAME));
+        alpha.recordStatusRequestSuccess(BETA_NAME);
+        assertEquals(NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MAX_BYTES, alpha.statusRequestBudgetFor(BETA_NAME));
+        alpha.recordStatusRequestFailure(BETA_NAME);
+        assertEquals(NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MAX_BYTES / 2, alpha.statusRequestBudgetFor(BETA_NAME));
+        alpha.recordStatusRequestFailure(BETA_NAME);
+        assertEquals(NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MAX_BYTES / 4, alpha.statusRequestBudgetFor(BETA_NAME));
+        alpha.recordStatusRequestFailure(BETA_NAME);
+        assertEquals(NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MIN_BYTES, alpha.statusRequestBudgetFor(BETA_NAME));
+        alpha.recordStatusRequestFailure(BETA_NAME);
+        assertEquals(NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MIN_BYTES, alpha.statusRequestBudgetFor(BETA_NAME));
+    }
+
+    @Test
+    void statusSidebandOutboxExposesQueuedAndDropCounters() throws IOException {
+        NetworkConfig alphaConfig = config(freePort(), ALPHA_NAME);
+        alphaConfig.listenEnabled = false;
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "outbox-counters-alpha");
+        alpha.savePeer(sidebandRoute(BETA_NAME, freePort(), BETA_GAME_PORT));
+
+        assertEquals(0L, alpha.statusOutboxQueuedBytes(BETA_NAME));
+        assertEquals(0L, alpha.statusOutboxQueuedCount(BETA_NAME));
+        assertEquals(0L, alpha.statusOutboxDroppedBytes(BETA_NAME));
+        assertEquals(0L, alpha.statusOutboxDroppedCount(BETA_NAME));
+
+        assertTrue(alpha.send(BETA_NAME, new WireMessage.PortalDirectory(List.of())));
+        assertEquals(1L, alpha.statusOutboxQueuedCount(BETA_NAME));
+        assertTrue(alpha.statusOutboxQueuedBytes(BETA_NAME) > 0L);
+        assertEquals(0L, alpha.statusOutboxDroppedCount(BETA_NAME));
+
+        assertEquals(1, alpha.drainStatusOutbox(BETA_NAME, NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MAX_BYTES).size());
+        assertEquals(0L, alpha.statusOutboxQueuedBytes(BETA_NAME));
+        assertEquals(0L, alpha.statusOutboxQueuedCount(BETA_NAME));
+    }
+
+    @Test
+    void debugSnapshotAggregatesCurrentSidebandOutboxes() throws IOException {
+        NetworkConfig alphaConfig = config(freePort(), ALPHA_NAME);
+        alphaConfig.listenEnabled = false;
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "debug-snapshot-alpha");
+        alpha.savePeer(sidebandRoute(BETA_NAME, freePort(), BETA_GAME_PORT));
+        alpha.savePeer(sidebandRoute(ZULU_NAME, freePort(), BETA_GAME_PORT + 1));
+
+        assertTrue(alpha.send(BETA_NAME, new WireMessage.PortalDirectory(List.of())));
+        assertTrue(alpha.send(ZULU_NAME, new WireMessage.PortalDirectory(List.of())));
+
+        NetworkManager.DebugSnapshot snapshot = alpha.debugSnapshot();
+        assertEquals(0L, snapshot.rawWriteQueueFrames());
+        assertEquals(
+            alpha.statusOutboxQueuedBytes(BETA_NAME) + alpha.statusOutboxQueuedBytes(ZULU_NAME),
+            snapshot.sidebandQueuedBytes()
+        );
+        assertEquals(2L, snapshot.sidebandQueuedCount());
+        assertEquals(0L, snapshot.sidebandDroppedBytes());
+        assertEquals(0L, snapshot.sidebandDroppedCount());
+    }
+
+    @Test
+    void statusSidebandNudgeRespectsSingleFlight() throws IOException {
+        NetworkConfig alphaConfig = config(freePort(), ALPHA_NAME);
+        alphaConfig.listenEnabled = false;
+        NetworkConfig.PeerEntry betaRoute = route(BETA_NAME, freePort());
+        betaRoute.publicHost = "127.0.0.1";
+        betaRoute.publicPort = freePort();
+
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "nudge-alpha");
+        alpha.savePeer(betaRoute);
+        alpha.statusPollInFlight.add(BETA_NAME);
+        alpha.start();
+
+        WireMessage.HandoffRequest handoff = new WireMessage.HandoffRequest(UUID.randomUUID(), UUID.randomUUID(), "Steve", UUID.randomUUID(), true, true, false, traversive());
+        assertTrue(alpha.send(BETA_NAME, handoff));
+
+        assertEquals(0L, alpha.nextStatusAttempt.get(BETA_NAME));
+        List<MinecraftStatusBridge.EncodedMessage> drained = alpha.drainStatusOutbox(BETA_NAME, NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MAX_BYTES);
+        assertEquals(1, drained.size());
+        assertInstanceOf(WireMessage.HandoffRequest.class, drained.get(0).message());
+        assertTrue(alpha.drainStatusOutbox(BETA_NAME, NetworkManager.STATUS_BRIDGE_REQUEST_BUDGET_MAX_BYTES).isEmpty());
+    }
+
+    @Test
+    void compressionSettingsApplyWithoutRebuildingTheManager() throws IOException {
+        NetworkConfig initial = config(freePort(), ALPHA_NAME);
+        initial.transport.compressionLevel = 3;
+        initial.transport.compressionDictTrainBytes = 128 * 1024;
+        NetworkManager manager = manager(initial, ALPHA_GAME_PORT, "compression-hotload");
+        NetworkConfig reloaded = config(initial.listenPort, ALPHA_NAME);
+        reloaded.transport.compressionLevel = 9;
+        reloaded.transport.compressionDictTrainBytes = 256 * 1024;
+
+        manager.applyConfig(reloaded);
+
+        assertEquals(9, manager.wireCompressionMetrics().compressionLevel());
+        assertEquals(256 * 1024, manager.dictionarySampleCollector().budgetBytes());
+    }
+
+    @Test
+    void compressionRetrainIntervalReschedulesWithoutRebuildingTheManager() throws IOException {
+        NetworkConfig initial = config(freePort(), ALPHA_NAME);
+        initial.transport.compressionRetrainIntervalSec = 60;
+        NetworkManager manager = manager(initial, ALPHA_GAME_PORT, "retrain-hotload");
+        manager.start();
+        assertTrue(manager.isRunning());
+        assertEquals(60L, manager.scheduledDictionaryRetrainSec());
+
+        NetworkConfig reloaded = config(initial.listenPort, ALPHA_NAME);
+        reloaded.transport.compressionRetrainIntervalSec = 120;
+        manager.applyConfig(reloaded);
+
+        assertTrue(manager.isRunning());
+        assertEquals(120L, manager.scheduledDictionaryRetrainSec());
+    }
+
+    @Test
+    void statusReportsUndialableRoutesAsWaiting() throws IOException {
+        int portA = freePort();
+        NetworkConfig alphaConfig = config(portA, ALPHA_NAME);
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "waiting-alpha");
+        NetworkConfig.PeerEntry undialableRoute = new NetworkConfig.PeerEntry();
+        undialableRoute.name = BETA_NAME;
+        undialableRoute.host = "";
+        undialableRoute.port = 0;
+        undialableRoute.publicHost = "";
+        undialableRoute.publicPort = 0;
+        alpha.savePeer(undialableRoute);
+
+        alpha.start();
+
+        List<NetworkManager.PeerStatus> statuses = alpha.status();
+        assertEquals(1, statuses.size());
+        assertEquals("WAITING", statuses.get(0).state());
+    }
+
+    @Test
+    void fallbackHostRotationFindsReachableAddress() throws IOException {
+        int portA = freePort();
+        int portB = freePort();
+        NetworkConfig alphaConfig = config(portA, ALPHA_NAME);
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "alpha");
+        NetworkConfig.PeerEntry betaRoute = route(BETA_NAME, "unreachable.invalid", portB);
+        betaRoute.fallbackHosts = "127.0.0.1";
+        alpha.savePeer(betaRoute);
+        NetworkManager beta = manager(config(portB, BETA_NAME), BETA_GAME_PORT, "beta");
+
+        startAndDial(alpha, beta);
+
+        awaitDialed("alpha reaches beta via fallback host", () -> alpha.isPeerReady(BETA_NAME), 20_000L, alpha);
+        awaitTrue("beta accepts alpha", () -> beta.isPeerReady(ALPHA_NAME), 10_000L);
+    }
+
+    @Test
+    void mutualDialsSettleToOneStableConnection() throws IOException, InterruptedException {
+        int portA = freePort();
+        int portB = freePort();
+        NetworkManager alpha = manager(config(portA, ALPHA_NAME), ALPHA_GAME_PORT, "alpha");
+        NetworkManager beta = manager(config(portB, BETA_NAME), BETA_GAME_PORT, "beta");
+        alpha.savePeer(route(BETA_NAME, portB));
+        beta.savePeer(route(ALPHA_NAME, portA));
+
+        startAndDial(alpha, beta);
+
+        awaitTrue("connected", () -> alpha.isPeerReady(BETA_NAME) && beta.isPeerReady(ALPHA_NAME), 10_000L);
+        for (int round = 0; round < 20; round++) {
+            alpha.dialer().scan();
+            beta.dialer().scan();
+            Thread.sleep(10L);
+        }
+
+        awaitTrue("duplicate dials settle back to a ready link",
+            () -> alpha.isPeerReady(BETA_NAME) && beta.isPeerReady(ALPHA_NAME), 10_000L);
+        long quiet = System.currentTimeMillis() + 250L;
+        while (System.currentTimeMillis() < quiet) {
+            assertTrue(alpha.isPeerReady(BETA_NAME) && beta.isPeerReady(ALPHA_NAME), "connection should stay stable after duplicate-dial dedupe");
+            Thread.sleep(10L);
+        }
+    }
+
+    @Test
+    void reconnectsAfterPeerRestartWithSameIdentity() throws IOException {
+        int portA = freePort();
+        int portB = freePort();
+        NetworkConfig alphaConfig = config(portA, ALPHA_NAME);
+        NetworkConfig betaConfig = config(portB, BETA_NAME);
+
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "alpha");
+        NetworkManager beta = manager(betaConfig, BETA_GAME_PORT, "beta");
+        alpha.savePeer(route(BETA_NAME, portB));
+        startAndDial(alpha, beta);
+        awaitTrue("initial connect", () -> alpha.isPeerReady(BETA_NAME), 20_000L);
+
+        beta.stop();
+        awaitTrue("alpha notices disconnect", () -> !alpha.isPeerReady(BETA_NAME), 10_000L);
+
+        NetworkManager betaReborn = manager(betaConfig, BETA_GAME_PORT, "beta");
+        betaReborn.start();
+        alpha.dialer().resetDialState(BETA_NAME);
+        awaitDialed("alpha reconnects", () -> alpha.isPeerReady(BETA_NAME), 20_000L, alpha);
+        awaitTrue("reborn beta sees alpha", () -> betaReborn.isPeerReady(ALPHA_NAME), 15_000L);
+    }
+
+    @Test
+    void universalTunnelRecoversWhenPeerReadyAndRemoteLastReportedClosed() throws IOException {
+        int portA = freePort();
+        int portB = freePort();
+        NetworkManager alpha = manager(config(portA, ALPHA_NAME), ALPHA_GAME_PORT, "alpha");
+        NetworkManager beta = manager(config(portB, BETA_NAME), BETA_GAME_PORT, "beta");
+        alpha.savePeer(route(BETA_NAME, portB));
+        beta.savePeer(route(ALPHA_NAME, portA));
+        startAndDial(alpha, beta);
+        awaitTrue("connected", () -> alpha.isPeerReady(BETA_NAME), 10_000L);
+
+        NetworkManager previousNetwork = Wormholes.networkManager;
+        RemotePortalRegistry previousRegistry = Wormholes.remotePortalRegistry;
+        try {
+            UUID portalId = UUID.randomUUID();
+            RemotePortalRegistry registry = new RemotePortalRegistry();
+            registry.applyDirectory(BETA_NAME, List.of(portalInfo(portalId, false)));
+            Wormholes.networkManager = alpha;
+            Wormholes.remotePortalRegistry = registry;
+
+            UniversalTunnel tunnel = new UniversalTunnel(BETA_NAME, portalId);
+            assertTrue(tunnel.isValid());
+        } finally {
+            Wormholes.networkManager = previousNetwork;
+            Wormholes.remotePortalRegistry = previousRegistry;
+        }
+    }
+
+    @Test
+    void disabledConfigDoesNotStart() {
+        NetworkConfig config = new NetworkConfig();
+        config.enabled = false;
+        NetworkManager manager = manager(config, 25565, "disabled");
+        manager.start();
+        assertFalse(manager.isRunning());
+    }
+
+    @Test
+    void sendToPeersDeliversToAllRawPeers() throws IOException, InterruptedException {
+        int portA = freePort();
+        int portB = freePort();
+        int portG = freePort();
+        NetworkManager alpha = manager(config(portA, ALPHA_NAME), ALPHA_GAME_PORT, "fanout-alpha");
+        NetworkManager beta = manager(config(portB, BETA_NAME), BETA_GAME_PORT, "fanout-beta");
+        NetworkManager gamma = manager(config(portG, "gamma"), 25567, "fanout-gamma");
+        alpha.savePeer(route(BETA_NAME, portB));
+        alpha.savePeer(route("gamma", portG));
+        LinkedBlockingQueue<String> received = new LinkedBlockingQueue<>();
+        beta.setMessageSink((peerName, message) -> {
+            if (message instanceof WireMessage.PortalDirectory) {
+                received.offer("beta");
+            }
+        });
+        gamma.setMessageSink((peerName, message) -> {
+            if (message instanceof WireMessage.PortalDirectory) {
+                received.offer("gamma");
+            }
+        });
+        startAndDial(alpha, beta, gamma);
+        awaitTrue("alpha raw-connected to both", () -> alpha.isPeerReady(BETA_NAME) && alpha.isPeerReady("gamma"), 10_000L);
+
+        alpha.sendToPeers(List.of(BETA_NAME, "gamma"), new WireMessage.PortalDirectory(List.of()));
+
+        java.util.Set<String> receivers = new java.util.HashSet<>();
+        for (int i = 0; i < 2; i++) {
+            String receiver = received.poll(10L, TimeUnit.SECONDS);
+            assertTrue(receiver != null, "expected both peers to receive the shared frame");
+            receivers.add(receiver);
+        }
+        assertTrue(receivers.contains("beta") && receivers.contains("gamma"), "both raw peers must receive the multicast, got " + receivers);
+    }
+
+    @Test
+    void sendToPeersFallsBackToSidebandOnlyPeer() throws IOException, InterruptedException {
+        int portA = freePort();
+        int portB = freePort();
+        int portG = freePort();
+        NetworkConfig alphaConfig = config(portA, ALPHA_NAME);
+        NetworkConfig betaConfig = config(portB, BETA_NAME);
+        NetworkConfig gammaConfig = config(portG, "gamma");
+        gammaConfig.listenEnabled = false;
+
+        NetworkManager alpha = manager(alphaConfig, ALPHA_GAME_PORT, "mixed-alpha");
+        NetworkManager beta = manager(betaConfig, BETA_GAME_PORT, "mixed-beta");
+        NetworkManager gamma = manager(gammaConfig, 25567, "mixed-gamma");
+        alpha.savePeer(route(BETA_NAME, portB));
+        NetworkConfig.PeerEntry gammaRoute = route("gamma", portG);
+        gammaRoute.publicHost = "127.0.0.1";
+        gammaRoute.publicPort = 25567;
+        alpha.savePeer(gammaRoute);
+        NetworkConfig.PeerEntry alphaRoute = new NetworkConfig.PeerEntry();
+        alphaRoute.name = ALPHA_NAME;
+        alphaRoute.host = "";
+        alphaRoute.port = 0;
+        alphaRoute.publicHost = "127.0.0.1";
+        alphaRoute.publicPort = ALPHA_GAME_PORT;
+        gamma.savePeer(alphaRoute);
+
+        LinkedBlockingQueue<String> received = new LinkedBlockingQueue<>();
+        beta.setMessageSink((peerName, message) -> {
+            if (message instanceof WireMessage.PortalDirectory) {
+                received.offer("beta");
+            }
+        });
+        gamma.setMessageSink((peerName, message) -> {
+            if (message instanceof WireMessage.PortalDirectory) {
+                received.offer("gamma");
+            }
+        });
+        startAndDial(alpha, beta, gamma);
+        awaitTrue("alpha raw-connected to beta", () -> alpha.isPeerReady(BETA_NAME), 10_000L);
+
+        alpha.sendToPeers(List.of(BETA_NAME, "gamma"), new WireMessage.PortalDirectory(List.of()));
+
+        java.util.Set<String> receivers = new java.util.HashSet<>();
+        for (int i = 0; i < 16 && !receivers.contains("gamma"); i++) {
+            MinecraftStatusBridge.StatusPacket request = gamma.createStatusBridgePacket(ALPHA_NAME, List.of());
+            MinecraftStatusBridge.StatusPacket response = alpha.handleStatusBridgeRequest(request);
+            assertTrue(response != null);
+            assertTrue(gamma.handleStatusBridgeResponse(ALPHA_NAME, response, 12L));
+            String receiver = received.poll(500L, TimeUnit.MILLISECONDS);
+            while (receiver != null) {
+                receivers.add(receiver);
+                receiver = received.poll(100L, TimeUnit.MILLISECONDS);
+            }
+        }
+        assertTrue(receivers.contains("beta"), "raw peer must receive the multicast");
+        assertTrue(receivers.contains("gamma"), "sideband-only peer must receive the multicast via the per-peer fallback");
+    }
+
+    @Test
+    void recordDictionarySampleSkipsExcludedTypes() {
+        NetworkManager manager = manager(config(8905, ALPHA_NAME), ALPHA_GAME_PORT, "sample-types");
+        byte[] bulky = new byte[4096];
+        manager.recordDictionarySample(WireMessageType.DICT_DATA, bulky);
+        manager.recordDictionarySample(WireMessageType.PING, new byte[40]);
+        assertEquals(0L, manager.dictionarySampleCollector().accumulatedBytes());
+        manager.recordDictionarySample(WireMessageType.CHUNK_DIFF, bulky);
+        assertEquals(4096L, manager.dictionarySampleCollector().accumulatedBytes());
+    }
+
+    @Test
+    void recordDictionarySampleIsNoOpWhenCollectorFull() {
+        NetworkManager manager = manager(config(8906, ALPHA_NAME), ALPHA_GAME_PORT, "sample-full");
+        DictionarySampleCollector collector = manager.dictionarySampleCollector();
+        byte[] chunk = new byte[32 * 1024];
+        int guard = 0;
+        while (!collector.isFull() && guard++ < 4096) {
+            collector.record(chunk);
+        }
+        assertTrue(collector.isFull());
+        int countWhenFull = collector.sampleCount();
+        manager.recordDictionarySample(WireMessageType.CHUNK_DIFF, new byte[4096]);
+        assertEquals(countWhenFull, collector.sampleCount());
+    }
+
+    @Test
+    void statusReportsSavedPeerRoutes() throws IOException {
+        int portA = freePort();
+        int portB = freePort();
+        NetworkManager alpha = manager(config(portA, ALPHA_NAME), ALPHA_GAME_PORT, "alpha");
+        NetworkManager beta = manager(config(portB, BETA_NAME), BETA_GAME_PORT, "beta");
+        alpha.savePeer(route(BETA_NAME, portB));
+        beta.savePeer(route(ALPHA_NAME, portA));
+        startAndDial(alpha, beta);
+        awaitTrue("connected", () -> alpha.isPeerReady(BETA_NAME), 10_000L);
+
+        List<NetworkManager.PeerStatus> statuses = alpha.status();
+        assertTrue(statuses.size() == 1 && statuses.get(0).name().equals(BETA_NAME) && statuses.get(0).state().equals("CONNECTED"));
+    }
+
+    @Test
+    void removePeerForgetsRouteAndTrustPersistently() throws Exception {
+        java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("Ed25519");
+        String betaKey = Handshake.encodePublicKey(generator.generateKeyPair().getPublic().getEncoded());
+        NetworkManager alpha = manager(config(8907, ALPHA_NAME), ALPHA_GAME_PORT, "remove-alpha");
+        alpha.savePeer(route(BETA_NAME, 8902));
+        alpha.trustPeer(BETA_NAME, betaKey);
+        assertNotNull(alpha.getPeer(BETA_NAME));
+        assertEquals(1, alpha.peers().size());
+
+        assertTrue(alpha.removePeer(BETA_NAME));
+        assertNull(alpha.getPeer(BETA_NAME));
+        assertEquals(0, alpha.knownPeerCount());
+        assertTrue(alpha.peers().isEmpty());
+        assertFalse(alpha.removePeer(BETA_NAME));
+
+        Path dataDirectory = tempDir.resolve("remove-alpha");
+        assertNull(PeerRouteStore.loadOrCreate(dataDirectory).get(BETA_NAME));
+        assertNull(PeerTrustStore.loadOrCreate(dataDirectory).get(BETA_NAME));
+    }
+}

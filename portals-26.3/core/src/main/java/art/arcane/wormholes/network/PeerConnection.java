@@ -1,0 +1,554 @@
+package art.arcane.wormholes.network;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+public final class PeerConnection {
+    public enum State {
+        HANDSHAKING,
+        READY,
+        CLOSED
+    }
+
+    public interface Listener {
+        boolean approvePeer(PeerConnection connection, String peerName, String mcVersion, String pluginVersion, byte[] publicKey);
+
+        void onReady(PeerConnection connection);
+
+        void onMessage(PeerConnection connection, WireMessage message);
+
+        void onClosed(PeerConnection connection, String reason);
+    }
+
+    public interface CompressionProvider {
+        WireCompression compression();
+
+        boolean compressionEnabled();
+
+        CompressionDictionary currentDictionary();
+
+        void recordDictionarySample(WireMessageType type, byte[] payload);
+
+        void onDictionaryNegotiated(PeerConnection connection, int dictVersion);
+    }
+
+    private static final Logger LOG = Logger.getLogger("Wormholes");
+    private static final long ENCODE_FAILURE_REPORT_INTERVAL_MILLIS = 60_000L;
+    private static final int HANDSHAKE_TIMEOUT_MS = 10_000;
+    private static final int READ_TIMEOUT_MS = 30_000;
+    private static final int WRITE_QUEUE_CAPACITY = 1024;
+    private static final int WRITE_CONTROL_RESERVE = 64;
+
+    private final PeerTransport.PeerChannel channel;
+    private final boolean dialer;
+    private final LocalIdentity identity;
+    private final byte[] expectedPeerPublicKey;
+    private final Listener listener;
+    private final CompressionProvider compressionProvider;
+    private final WireCompression compression;
+    private final WireCodec.PayloadSampler sampler;
+    private final RawOutbox writeQueue = new RawOutbox(WRITE_QUEUE_CAPACITY, WRITE_CONTROL_RESERVE);
+    private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final AtomicBoolean started = new AtomicBoolean(false);
+    private final AtomicReference<State> state = new AtomicReference<>(State.HANDSHAKING);
+    private final AtomicLong lastInboundMillis = new AtomicLong(System.currentTimeMillis());
+    private final AtomicLong rttMillis = new AtomicLong(-1L);
+    private final AtomicLong encodeFailures = new AtomicLong();
+    private final AtomicLong nextEncodeFailureReportMillis = new AtomicLong();
+
+    private volatile String peerName;
+    private volatile String expectedPeerName;
+    private volatile String peerAdvertiseHost;
+    private volatile byte[] peerPublicKey;
+    private volatile int peerWormholePort = -1;
+    private volatile GameEndpoint peerGameEndpoint;
+    private volatile GameEndpoint peerPrivateGameEndpoint;
+    private volatile boolean peerCompressionSupported;
+    private volatile byte[] peerDictHash;
+    private volatile int peerDictVersion;
+    private volatile int negotiatedDictVersion;
+    private volatile long peerCapabilities;
+    private volatile long negotiatedCapabilities;
+    private volatile int negotiatedProtocolVersion = WireCodec.PROTOCOL_VERSION;
+    private volatile String pendingCloseReason;
+    private volatile Thread readerThread;
+    private volatile Thread writerThread;
+
+    public PeerConnection(PeerTransport.PeerChannel channel, boolean dialer, LocalIdentity identity, String expectedPeerName, byte[] expectedPeerPublicKey, Listener listener, CompressionProvider compressionProvider) {
+        this.channel = channel;
+        this.dialer = dialer;
+        this.identity = identity;
+        this.expectedPeerName = expectedPeerName;
+        this.expectedPeerPublicKey = expectedPeerPublicKey == null ? null : expectedPeerPublicKey.clone();
+        this.peerName = expectedPeerName;
+        this.listener = listener;
+        this.compressionProvider = compressionProvider;
+        this.compression = compressionProvider == null ? null : compressionProvider.compression();
+        this.sampler = compressionProvider == null ? null : compressionProvider::recordDictionarySample;
+    }
+
+    public void start() {
+        if (!started.compareAndSet(false, true)) {
+            throw new IllegalStateException("Peer connection has already started");
+        }
+        try {
+            Thread writer = Thread.ofVirtual().name("Wormholes-Net-Writer-" + describeRemote()).unstarted(this::runWriter);
+            Thread reader = Thread.ofVirtual().name("Wormholes-Net-Reader-" + describeRemote()).unstarted(this::runReader);
+            writerThread = writer;
+            readerThread = reader;
+            writer.start();
+            reader.start();
+        } catch (RuntimeException | Error e) {
+            close("connection worker startup failed");
+            LOG.log(Level.SEVERE, "net: failed to start connection workers for " + describeRemote(), e);
+        }
+    }
+
+    public boolean send(WireMessage message) {
+        return send(new OutboundFrame(message));
+    }
+
+    public boolean send(OutboundFrame frame) {
+        if (state.get() == State.CLOSED) {
+            return false;
+        }
+        if (!writeQueue.offer(frame)) {
+            close("write queue overflow");
+            return false;
+        }
+        return true;
+    }
+
+    public void close(String reason) {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+        state.set(State.CLOSED);
+        writeQueue.clear();
+        writeQueue.offer(OutboundFrame.CLOSE);
+        try {
+            channel.close();
+        } catch (IOException e) {
+            LOG.log(Level.FINE, "net: failed to close channel for " + describeRemote(), e);
+        }
+        try {
+            listener.onClosed(this, reason);
+        } catch (RuntimeException e) {
+            LOG.log(Level.SEVERE, "net: close listener failed for " + describeRemote(), e);
+        } catch (Error e) {
+            LOG.log(Level.SEVERE, "net: close listener failed for " + describeRemote(), e);
+            throw e;
+        }
+    }
+
+    /**
+     * Waits for this connection's reader and writer to finish after a close, so a caller tearing the
+     * network down knows no inbound frame is still being handled. Never joins the calling thread, so a
+     * close issued from inside a worker cannot deadlock.
+     */
+    public boolean awaitWorkersStopped(long millis) {
+        long deadline = System.currentTimeMillis() + Math.max(0L, millis);
+        boolean reader = joinWorker(readerThread, deadline);
+        boolean writer = joinWorker(writerThread, deadline);
+        return reader && writer;
+    }
+
+    private static boolean joinWorker(Thread worker, long deadline) {
+        if (worker == null || worker == Thread.currentThread()) {
+            return true;
+        }
+        long remaining = deadline - System.currentTimeMillis();
+        if (remaining > 0L) {
+            try {
+                worker.join(remaining);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        return !worker.isAlive();
+    }
+
+    /** Closes once every frame queued before this call has been written; used when the last frame matters (tombstones). */
+    public void closeAfterFlush(String reason) {
+        if (state.get() == State.CLOSED) {
+            return;
+        }
+        pendingCloseReason = reason;
+        if (!writeQueue.offer(OutboundFrame.CLOSE)) {
+            close(reason);
+        }
+    }
+
+    public State getState() {
+        return state.get();
+    }
+
+    public boolean isDialer() {
+        return dialer;
+    }
+
+    public String getPeerName() {
+        return peerName;
+    }
+
+    public String getPeerAdvertiseHost() {
+        String advertised = peerAdvertiseHost;
+        if (advertised != null && !advertised.isBlank()) {
+            return advertised;
+        }
+        return channel.describeRemote();
+    }
+
+    public int getPeerWormholePort() {
+        return peerWormholePort;
+    }
+
+    public GameEndpoint getPeerGameEndpoint() {
+        return peerGameEndpoint;
+    }
+
+    public GameEndpoint getPeerPrivateGameEndpoint() {
+        return peerPrivateGameEndpoint;
+    }
+
+    public byte[] getPeerPublicKey() {
+        return peerPublicKey == null ? null : peerPublicKey.clone();
+    }
+
+    public byte[] getPeerDictHash() {
+        return peerDictHash == null ? null : peerDictHash.clone();
+    }
+
+    public int getPeerDictVersion() {
+        return peerDictVersion;
+    }
+
+    public boolean isPeerCompressionSupported() {
+        return peerCompressionSupported;
+    }
+
+    public boolean isDictionaryNegotiated() {
+        return negotiatedDictVersion > 0;
+    }
+
+    public int getNegotiatedDictVersion() {
+        return negotiatedDictVersion;
+    }
+
+    public void enableDictionary(int dictVersion) {
+        negotiatedDictVersion = dictVersion;
+    }
+
+    public void disableDictionary() {
+        negotiatedDictVersion = 0;
+    }
+
+    public void updatePeerDictionary(byte[] hash, int version) {
+        peerDictHash = hash;
+        peerDictVersion = version;
+    }
+
+    public long getLastInboundMillis() {
+        return lastInboundMillis.get();
+    }
+
+    public long getRttMillis() {
+        return rttMillis.get();
+    }
+
+    int getWriteQueueSize() {
+        return writeQueue.size();
+    }
+
+    public String describeRemote() {
+        return channel.describeRemote();
+    }
+
+    public PeerTransport.PeerChannel channel() {
+        return channel;
+    }
+
+    private void runReader() {
+        String failure = null;
+        Error terminalError = null;
+        try {
+            channel.setTcpNoDelay(true);
+            channel.setReadTimeout(HANDSHAKE_TIMEOUT_MS);
+            DataInputStream in = new DataInputStream(new BufferedInputStream(channel.getInputStream(), 65536));
+
+            if (dialer) {
+                handshakeAsDialer(in);
+            } else {
+                handshakeAsAcceptor(in);
+            }
+
+            channel.setReadTimeout(READ_TIMEOUT_MS);
+            if (!state.compareAndSet(State.HANDSHAKING, State.READY)) {
+                return;
+            }
+            if (closed.get()) {
+                return;
+            }
+            lastInboundMillis.set(System.currentTimeMillis());
+            listener.onReady(this);
+
+            while (!closed.get()) {
+                WireMessage message = WireCodec.readFrame(in, compression, sampler);
+                lastInboundMillis.set(System.currentTimeMillis());
+                if (message instanceof WireMessage.Ping ping) {
+                    send(new WireMessage.Pong(ping.sentAtMillis()));
+                    continue;
+                }
+                if (message instanceof WireMessage.Pong pong) {
+                    rttMillis.set(Math.max(0L, System.currentTimeMillis() - pong.echoMillis()));
+                    continue;
+                }
+                listener.onMessage(this, message);
+            }
+        } catch (IOException e) {
+            failure = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+        } catch (HandshakeException e) {
+            failure = e.getMessage();
+        } catch (RuntimeException e) {
+            failure = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            LOG.log(Level.SEVERE, "net: reader failed for " + describeRemote(), e);
+        } catch (Error e) {
+            failure = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            terminalError = e;
+            LOG.log(Level.SEVERE, "net: reader failed for " + describeRemote(), e);
+        }
+        close(failure == null ? "connection ended" : failure);
+        if (terminalError != null) {
+            throw terminalError;
+        }
+    }
+
+    private void handshakeAsDialer(DataInputStream in) throws IOException, HandshakeException {
+        byte[] dialerNonce = Handshake.newNonce();
+        WireMessage.Hello hello = new WireMessage.Hello(WireCodec.PROTOCOL_VERSION, identity.mcVersion(), identity.pluginVersion(), identity.serverName(),
+            identity.advertiseHost() == null ? "" : identity.advertiseHost(), identity.wormholePort(), identity.gameEndpoint(), identity.privateGameEndpoint(), dialerNonce, identity.publicKey(),
+            localCompressionSupported(), localDictHash(), localDictVersion(), identity.capabilities());
+        sendNow(hello);
+
+        WireMessage response = WireCodec.readFrame(in, compression);
+        if (!(response instanceof WireMessage.Challenge challenge)) {
+            throw new HandshakeException("Expected CHALLENGE, got " + response.type());
+        }
+        if (expectedPeerName != null && !expectedPeerName.equals(challenge.serverName())) {
+            throw new HandshakeException("Peer identified as '" + challenge.serverName() + "', expected '" + expectedPeerName + "'");
+        }
+        if (expectedPeerPublicKey != null && !Handshake.sameKey(expectedPeerPublicKey, challenge.publicKey())) {
+            throw new HandshakeException("Peer '" + challenge.serverName() + "' used an unexpected public key");
+        }
+        int negotiatedVersion = Handshake.negotiateTranscriptVersion(challenge.publicKey(), challenge.signature(), hello, challenge,
+            Handshake.ROLE_ACCEPTOR, WireCodec.PROTOCOL_VERSION);
+        if (negotiatedVersion < 0) {
+            throw new HandshakeException("Peer failed authentication");
+        }
+        negotiatedProtocolVersion = negotiatedVersion;
+        peerName = challenge.serverName();
+        peerAdvertiseHost = challenge.advertiseHost();
+        peerWormholePort = challenge.wormholePort();
+        peerGameEndpoint = challenge.gameEndpoint();
+        peerPrivateGameEndpoint = challenge.privateGameEndpoint();
+        peerPublicKey = challenge.publicKey();
+        absorbPeerCapabilities(challenge.capabilities());
+        absorbPeerCompression(challenge.compressionSupported(), challenge.currentDictHash(), challenge.currentDictVersion());
+        if (expectedPeerPublicKey == null && !listener.approvePeer(this, challenge.serverName(), identity.mcVersion(), identity.pluginVersion(), challenge.publicKey())) {
+            throw new HandshakeException("Peer '" + challenge.serverName() + "' rejected");
+        }
+
+        sendNow(new WireMessage.Auth(Handshake.signTranscript(identity.privateKey(), hello, challenge, Handshake.ROLE_DIALER, negotiatedVersion)));
+
+        WireMessage ready = WireCodec.readFrame(in, compression);
+        if (!(ready instanceof WireMessage.Ready)) {
+            throw new HandshakeException("Expected READY, got " + ready.type());
+        }
+        finalizeDictNegotiation();
+    }
+
+    private void handshakeAsAcceptor(DataInputStream in) throws IOException, HandshakeException {
+        WireMessage first = WireCodec.readFrame(in, compression);
+        if (!(first instanceof WireMessage.Hello hello)) {
+            throw new HandshakeException("Expected HELLO, got " + first.type());
+        }
+        if (!WireCodec.isCompatibleProtocol(hello.protocolVersion())) {
+            throw new HandshakeException("Protocol mismatch: peer " + hello.protocolVersion() + ", local " + WireCodec.PROTOCOL_VERSION
+                + " (accepts " + WireCodec.MIN_COMPATIBLE_PROTOCOL + "-" + WireCodec.PROTOCOL_VERSION + ")");
+        }
+        if (!identity.mcVersion().equals(hello.mcVersion())) {
+            LOG.warning("net: rejected link from '" + hello.serverName() + "' (" + describeRemote() + "): peer runs MC "
+                + hello.mcVersion() + ", local runs MC " + identity.mcVersion()
+                + "; linked servers must run the same Minecraft version");
+            throw new HandshakeException("MC version mismatch: peer " + hello.mcVersion() + ", local " + identity.mcVersion()
+                + "; linked servers must run the same Minecraft version");
+        }
+        int negotiatedVersion = WireCodec.negotiatedProtocol(hello.protocolVersion());
+        negotiatedProtocolVersion = negotiatedVersion;
+        peerName = hello.serverName();
+        peerAdvertiseHost = hello.advertiseHost();
+        peerPublicKey = hello.publicKey();
+        peerWormholePort = hello.wormholePort();
+        peerGameEndpoint = hello.gameEndpoint();
+        peerPrivateGameEndpoint = hello.privateGameEndpoint();
+        absorbPeerCapabilities(hello.capabilities());
+        absorbPeerCompression(hello.compressionSupported(), hello.currentDictHash(), hello.currentDictVersion());
+
+        byte[] acceptorNonce = Handshake.newNonce();
+        WireMessage.Challenge challenge = new WireMessage.Challenge(identity.serverName(),
+            identity.advertiseHost() == null ? "" : identity.advertiseHost(), identity.wormholePort(),
+            identity.gameEndpoint(), identity.privateGameEndpoint(), acceptorNonce, identity.publicKey(), new byte[0],
+            localCompressionSupported(), localDictHash(), localDictVersion(), identity.capabilities());
+        byte[] signature = Handshake.signTranscript(identity.privateKey(), hello, challenge, Handshake.ROLE_ACCEPTOR, negotiatedVersion);
+        sendNow(new WireMessage.Challenge(challenge.serverName(), challenge.advertiseHost(), challenge.wormholePort(),
+            challenge.gameEndpoint(), challenge.privateGameEndpoint(), challenge.nonce(), challenge.publicKey(), signature,
+            challenge.compressionSupported(), challenge.currentDictHash(), challenge.currentDictVersion(), challenge.capabilities()));
+
+        WireMessage second = WireCodec.readFrame(in, compression);
+        if (!(second instanceof WireMessage.Auth auth)) {
+            throw new HandshakeException("Expected AUTH, got " + second.type());
+        }
+        if (!Handshake.verifyTranscript(hello.publicKey(), auth.signature(), hello, challenge, Handshake.ROLE_DIALER, negotiatedVersion)) {
+            throw new HandshakeException("Peer failed authentication");
+        }
+        if (!listener.approvePeer(this, hello.serverName(), hello.mcVersion(), hello.pluginVersion(), hello.publicKey())) {
+            throw new HandshakeException("Peer '" + hello.serverName() + "' rejected");
+        }
+
+        sendNow(new WireMessage.Ready());
+        finalizeDictNegotiation();
+    }
+
+    private void absorbPeerCapabilities(long capabilities) {
+        peerCapabilities = capabilities;
+        negotiatedCapabilities = capabilities & identity.capabilities();
+    }
+
+    /** Wire version both sides signed the handshake at: min(local, peer). */
+    public int negotiatedProtocolVersion() {
+        return negotiatedProtocolVersion;
+    }
+
+    /** Capability bits advertised by the peer in its handshake. */
+    public long peerCapabilities() {
+        return peerCapabilities;
+    }
+
+    /** Intersection of local and peer capabilities; gate every post-21 message type on this. */
+    public long negotiatedCapabilities() {
+        return negotiatedCapabilities;
+    }
+
+    public boolean supports(WireCapability capability) {
+        return capability.in(negotiatedCapabilities);
+    }
+
+    private boolean localCompressionSupported() {
+        return compressionProvider != null && compressionProvider.compressionEnabled();
+    }
+
+    private byte[] localDictHash() {
+        CompressionDictionary current = compressionProvider == null ? null : compressionProvider.currentDictionary();
+        return current == null ? CompressionDictionary.ZERO_HASH : current.hash();
+    }
+
+    private int localDictVersion() {
+        CompressionDictionary current = compressionProvider == null ? null : compressionProvider.currentDictionary();
+        return current == null ? 0 : current.version();
+    }
+
+    private void absorbPeerCompression(boolean supported, byte[] dictHash, int dictVersion) {
+        peerCompressionSupported = supported;
+        peerDictHash = dictHash;
+        peerDictVersion = dictVersion;
+    }
+
+    private void finalizeDictNegotiation() {
+        if (compressionProvider == null || !localCompressionSupported() || !peerCompressionSupported) {
+            return;
+        }
+        CompressionDictionary local = compressionProvider.currentDictionary();
+        if (local == null || peerDictHash == null) {
+            return;
+        }
+        if (!CompressionDictionary.sameHash(local.hash(), peerDictHash)) {
+            return;
+        }
+        enableDictionary(local.version());
+        compressionProvider.onDictionaryNegotiated(this, local.version());
+    }
+
+    private void sendNow(WireMessage message) throws IOException {
+        if (!writeQueue.offer(new OutboundFrame(message))) {
+            throw new IOException("write queue overflow during handshake");
+        }
+    }
+
+    private void runWriter() {
+        try {
+            OutputStream rawOut = channel.getOutputStream();
+            DataOutputStream out = new DataOutputStream(new BufferedOutputStream(rawOut, 65536));
+            while (!closed.get()) {
+                OutboundFrame frame = writeQueue.poll(500, TimeUnit.MILLISECONDS);
+                if (frame == null) {
+                    continue;
+                }
+                if (frame == OutboundFrame.CLOSE) {
+                    out.flush();
+                    String reason = pendingCloseReason;
+                    if (reason != null) {
+                        close(reason);
+                    }
+                    return;
+                }
+                byte[] bytes;
+                try {
+                    bytes = frame.encodedFrame(compression, negotiatedDictVersion, sampler);
+                } catch (IOException e) {
+                    reportEncodeFailure(frame, e);
+                    continue;
+                }
+                out.write(bytes);
+                if (RawOutbox.isControl(frame) || writeQueue.isEmpty()) {
+                    out.flush();
+                }
+            }
+        } catch (IOException e) {
+            close("write failed: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void reportEncodeFailure(OutboundFrame frame, IOException error) {
+        encodeFailures.incrementAndGet();
+        long nowMillis = System.currentTimeMillis();
+        long nextReportMillis = nextEncodeFailureReportMillis.get();
+        if (nowMillis < nextReportMillis
+            || !nextEncodeFailureReportMillis.compareAndSet(nextReportMillis,
+                nowMillis + ENCODE_FAILURE_REPORT_INTERVAL_MILLIS)) {
+            return;
+        }
+        long failures = encodeFailures.getAndSet(0L);
+        LOG.log(Level.WARNING,
+            "net: dropped " + frame.message().type() + " to " + describeRemote() + "; " + failures
+                + " encode failure(s) occurred since the previous report; repeated failures are throttled",
+            error);
+    }
+
+    private static final class HandshakeException extends Exception {
+        private HandshakeException(String message) {
+            super(message);
+        }
+    }
+}

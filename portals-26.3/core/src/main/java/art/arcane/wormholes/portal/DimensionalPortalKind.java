@@ -1,0 +1,54 @@
+package art.arcane.wormholes.portal;
+
+import java.util.Locale;
+
+public enum DimensionalPortalKind
+{
+	NONE,
+	NETHER,
+	SHAPED_NETHER,
+	END_SOURCE,
+	END_ARRIVAL,
+	END_EXIT;
+
+	public boolean isNetherPortal()
+	{
+		return this == NETHER || this == SHAPED_NETHER;
+	}
+
+	public boolean isManagedEndPortal()
+	{
+		return this == END_SOURCE || this == END_ARRIVAL || this == END_EXIT;
+	}
+
+	public boolean isManagedPortal()
+	{
+		return this != NONE;
+	}
+
+	public boolean isReceiverOnly()
+	{
+		return this == END_ARRIVAL;
+	}
+
+	public boolean isGenericDestination()
+	{
+		return !isManagedPortal();
+	}
+
+	public static DimensionalPortalKind fromName(String name)
+	{
+		if(name == null || name.isBlank())
+		{
+			return NONE;
+		}
+		try
+		{
+			return valueOf(name.trim().toUpperCase(Locale.ROOT));
+		}
+		catch(IllegalArgumentException ignored)
+		{
+			return NONE;
+		}
+	}
+}

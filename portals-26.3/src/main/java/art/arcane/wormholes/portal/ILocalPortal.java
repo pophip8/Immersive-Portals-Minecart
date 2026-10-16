@@ -1,0 +1,229 @@
+package art.arcane.wormholes.portal;
+
+import art.arcane.wormholes.network.TraversalAdmissionPolicy;
+import java.io.IOException;
+import java.util.UUID;
+import java.util.concurrent.CompletionStage;
+
+import org.bukkit.Location;
+import org.bukkit.World;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Player;
+import org.bukkit.event.Listener;
+
+import art.arcane.optics.math.Box;
+import art.arcane.optics.math.Face;
+import art.arcane.volmlib.util.inventorygui.Window;
+import art.arcane.optics.frame.Frame;
+import art.arcane.optics.frame.QuarterTurn;
+
+public interface ILocalPortal extends IPortal, IWritable, Listener, TraversalAdmissionPolicy.InboundPortal, ProjectorViewSettings
+{
+	public void save();
+
+	public boolean needsSaving();
+
+	public PortalSaveSnapshot prepareSave();
+
+	public void writeSave(PortalSaveSnapshot snapshot) throws IOException;
+
+	public void rejectSave();
+
+	public void saveNow() throws IOException;
+
+	public void deleteData();
+
+	public PortalStructure getStructure();
+
+	public PortalType getType();
+
+	public void setType(PortalType type);
+
+	public void update();
+
+	public void close();
+
+	public boolean isOpen();
+
+	public void open();
+
+	public void setOpen(boolean open);
+
+	public boolean isAmbientAttended();
+
+	public void setAmbientAttended(boolean attended);
+
+	public void onLooking(Player p, boolean holdingWand);
+
+	public void onWanded(Player p);
+
+	public boolean isLookingAt(Player p);
+
+	public void receive(Traversive t);
+
+	public Location computeExitTarget(Traversive t);
+
+	public void completeRemoteArrival(Entity entity, Traversive t);
+
+	public boolean canCompleteDeparture(Entity entity, Traversive traversive);
+
+	public CompletionStage<Boolean> prepareDeparture(Entity entity, Traversive traversive);
+
+	public boolean confirmDeparture(Entity entity, Traversive t);
+
+	public void rejectRemoteArrival(Entity entity, Traversive t);
+
+	public void rejectDeparture(Entity entity, Traversive t);
+
+	public boolean canDepart(Entity entity);
+
+	public boolean canArrive(Entity entity);
+
+	public void setDirection(Face d);
+
+	public void setFrame(Frame frame);
+
+	public ITunnel getTunnel();
+
+	public boolean hasTunnel();
+
+	public boolean setDestination(IPortal portal);
+
+	public boolean linkRemote(String serverName, UUID portalId);
+
+	public void unlink();
+
+	public UUID getDimensionalCounterpartId();
+
+	public void setDimensionalCounterpartId(UUID counterpartId);
+
+	public DimensionalPortalKind getDimensionalPortalKind();
+
+	public void setDimensionalPortalKind(DimensionalPortalKind kind);
+
+	public void destroy();
+
+	public boolean isDestroyed();
+
+	public String getRouter(boolean dark);
+
+	public String getRouter(boolean dark, IPortal source);
+
+	public void uiOpenPortalMenu(Player p);
+
+	public Window uiCreatePortalMenu(Player p);
+
+	public void uiChooseMode(Player p);
+
+	public void uiChooseDestination(Player p);
+
+	public void uiChangeName(Player p);
+
+	public void uiChangeDirection(Player p);
+
+	public boolean isGateway();
+
+	public boolean supportsProjections();
+
+	public boolean isProjecting();
+
+	public ProjectionMode getProjectionMode();
+
+	public void setProjectionMode(ProjectionMode mode);
+
+	public boolean isMirrorMode();
+
+	public void setMirrorMode(boolean mirrorMode);
+
+	public QuarterTurn getMirrorRotation();
+
+	public void setMirrorRotation(QuarterTurn rotation);
+
+	public PortalPermissionMode getPermissionMode();
+
+	public void setPermissionMode(PortalPermissionMode mode);
+
+	public String getPermissionNode();
+
+	public boolean isOutgoingTraversalsEnabled();
+
+	public void setOutgoingTraversalsEnabled(boolean enabled);
+
+	public boolean isIncomingTraversalsEnabled();
+
+	public void setIncomingTraversalsEnabled(boolean enabled);
+
+	public int getNetworkViewDepth();
+
+	public void setNetworkViewDepth(int depth);
+
+	public int getNetworkViewLateralPad();
+
+	public void setNetworkViewLateralPad(int lateralPad);
+
+	public int getNetworkViewHeartbeatTicks();
+
+	public void setNetworkViewHeartbeatTicks(int ticks);
+
+	public int getNetworkViewEntityIntervalTicks();
+
+	public void setNetworkViewEntityIntervalTicks(int ticks);
+
+	public int getNetworkViewUnsubscribeGraceSeconds();
+
+	public void setNetworkViewUnsubscribeGraceSeconds(int seconds);
+
+	public String getNetworkViewFallbackBlock();
+
+	public void setNetworkViewFallbackBlock(String blockState);
+
+	public boolean isBlackoutBackground();
+
+	public void setBlackoutBackground(boolean enabled);
+
+	public BlackoutColor getBlackoutColor();
+
+	public void setBlackoutColor(BlackoutColor color);
+
+	public int getActivationRange();
+
+	public void setActivationRange(int rangeBlocks);
+
+	public double getEffectiveActivationRange();
+
+	public ProjectionRenderMode getRenderMode();
+
+	public void setRenderMode(ProjectionRenderMode mode);
+
+	public AmbientParticleStyle getAmbientStyle();
+
+	public void setAmbientStyle(AmbientParticleStyle style);
+
+	public int getAmbientColor();
+
+	public void setAmbientColor(int color);
+
+	public String getSurfaceSkin();
+
+	public void setSurfaceSkin(String skin);
+
+	public boolean isPublicLookLabel();
+
+	public default boolean hasSurfaceSkin()
+	{
+		return !getSurfaceSkin().isEmpty();
+	}
+
+	public default boolean blocksProjection()
+	{
+		return hasSurfaceSkin() && !BukkitPortalSurfaces.isTransparentSkin(getSurfaceSkin());
+	}
+
+	public Box getView();
+
+	public World getWorld();
+
+	public Location getCenter();
+
+	public Box getArea();
+}

@@ -1,0 +1,84 @@
+package art.arcane.wormholes.network.view;
+
+import org.bukkit.entity.Pose;
+import org.junit.jupiter.api.Test;
+
+import java.util.UUID;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import art.arcane.optics.entity.EntitySnapshot;
+
+class ViewServerBlobRecaptureGateTest {
+    private static final long INTERVAL = 40L;
+    private static final int UNCHANGED_STATE = 0;
+
+    private static EntitySnapshot visual() {
+        return EntitySnapshot.full(
+            new UUID(1L, 2L),
+            "minecraft:zombie",
+            0.0D, 64.0D, 0.0D,
+            1.95D,
+            0.0D, 0.0D, 1.0D,
+            0.0F, 0.0F,
+            0.0D, 0.0D, 0.0D,
+            true,
+            "",
+            "",
+            "",
+            null,
+            null,
+            new byte[]{1},
+            new byte[]{2},
+            0
+        );
+    }
+
+    private static ViewEntityState.BlobCaptureState<Pose> state(long tick) {
+        return new ViewEntityState.BlobCaptureState<>(tick, Pose.STANDING, false, UNCHANGED_STATE, 0L);
+    }
+
+    @Test
+    void nullPreviousVisualRecaptures() {
+        assertTrue(ViewServer.shouldRecaptureBlobs(null, state(0L), 1L, INTERVAL, Pose.STANDING, false, UNCHANGED_STATE, 0L));
+    }
+
+    @Test
+    void nullPreviousBlobStateRecaptures() {
+        assertTrue(ViewServer.shouldRecaptureBlobs(visual(), null, 1L, INTERVAL, Pose.STANDING, false, UNCHANGED_STATE, 0L));
+    }
+
+    @Test
+    void intervalElapsedRecaptures() {
+        assertFalse(ViewServer.shouldRecaptureBlobs(visual(), state(0L), 39L, INTERVAL, Pose.STANDING, false, UNCHANGED_STATE, 0L));
+        assertTrue(ViewServer.shouldRecaptureBlobs(visual(), state(0L), 40L, INTERVAL, Pose.STANDING, false, UNCHANGED_STATE, 0L));
+    }
+
+    @Test
+    void poseChangeRecapturesImmediately() {
+        assertTrue(ViewServer.shouldRecaptureBlobs(visual(), state(0L), 1L, INTERVAL, Pose.SNEAKING, false, UNCHANGED_STATE, 0L));
+    }
+
+    @Test
+    void fireToggleRecapturesImmediately() {
+        assertTrue(ViewServer.shouldRecaptureBlobs(visual(), state(0L), 1L, INTERVAL, Pose.STANDING, true, UNCHANGED_STATE, 0L));
+    }
+
+    @Test
+    void entityStateChangeRecapturesImmediately() {
+        assertTrue(ViewServer.shouldRecaptureBlobs(visual(), state(0L), 1L, INTERVAL, Pose.STANDING, false, 12345, 0L));
+    }
+
+    @Test
+    void unchangedStateWithinIntervalReuses() {
+        assertFalse(ViewServer.shouldRecaptureBlobs(visual(), state(10L), 20L, INTERVAL, Pose.STANDING, false, UNCHANGED_STATE, 0L));
+    }
+
+    @Test
+    void synchronizedMetadataChangesRecaptureWithinTheInterval() {
+        assertTrue(ViewServer.shouldRecaptureBlobs(visual(), state(10L), 11L, INTERVAL, Pose.STANDING, false, UNCHANGED_STATE, 1L));
+        ViewEntityState.BlobCaptureState<Pose> changed = new ViewEntityState.BlobCaptureState<>(11L, Pose.STANDING, false, UNCHANGED_STATE, 1L);
+        assertFalse(ViewServer.shouldRecaptureBlobs(visual(), changed, 12L, INTERVAL, Pose.STANDING, false, UNCHANGED_STATE, 1L));
+        assertTrue(ViewServer.shouldRecaptureBlobs(visual(), changed, 12L, INTERVAL, Pose.STANDING, false, UNCHANGED_STATE, 2L));
+    }
+}

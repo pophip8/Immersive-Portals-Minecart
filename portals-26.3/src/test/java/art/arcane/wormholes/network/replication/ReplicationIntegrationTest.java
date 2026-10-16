@@ -1,0 +1,160 @@
+package art.arcane.wormholes.network.replication;
+
+import art.arcane.optics.math.CellKeys;
+
+import art.arcane.wormholes.network.view.BukkitRemoteViewCodec;
+
+import art.arcane.wormholes.network.WireMessage;
+import art.arcane.wormholes.network.view.ViewSlice;
+
+import org.bukkit.World;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+import java.util.UUID;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class ReplicationIntegrationTest {
+    private static final String PEER = "peer-int";
+
+    @Test
+    void endToEndBulkAndDiffPropagatesToSink(@TempDir Path dir) throws IOException {
+        TestNetworkSink source = new TestNetworkSink(dir);
+        ChunkReplicationManager manager = source.getReplicationManager();
+        World world = StubWorld.create(UUID.randomUUID());
+        long chunkKey = CellKeys.chunkKey(0, 0);
+        manager.subscribe(PEER, world.getUID(), world.getUID(), ReplicationTestStream.stream(world.getUID(), world, chunkKey));
+        byte[] bulkPayload = synthesizeBulkPayload(0, 0, 17L);
+        manager.sendBulk(PEER, world.getUID(), ReplicationTestStream.stream(world.getUID(), world, chunkKey), bulkPayload, contentHashOf(bulkPayload));
+
+        RemoteChunkStore sink = new RemoteChunkStore(BukkitRemoteViewCodec.INSTANCE::blockEntityCandidate, RemoteChunkStore.Options.defaults());
+        WireMessage bulkMessage = source.sentTo(PEER).get(0);
+        assertTrue(bulkMessage instanceof WireMessage.ChunkBulkBatch);
+        WireMessage.ChunkBulkBatch chunkBulkBatch = (WireMessage.ChunkBulkBatch) bulkMessage;
+        sink.applyBulk(chunkBulkBatch.chunks().get(0));
+        assertEquals(manager.canonicalHash(PEER, ReplicationTestStream.stream(world.getUID(), world, chunkKey)), sink.hashAt(ReplicationTestStream.stream(world.getUID(), world, chunkKey)));
+
+        Random random = new Random(42L);
+        List<BlockChange> changes = new ArrayList<>(100);
+        for (int i = 0; i < 100; i++) {
+            int lx = random.nextInt(16);
+            int ly = 60 + random.nextInt(24);
+            int lz = random.nextInt(16);
+            changes.add(new BlockChange(BlockChange.pack(lx, ly, lz), "minecraft:dirt", BlockChange.FLAG_NONE));
+        }
+        manager.onChunkDrain(world.getUID(), chunkKey, changes, List.of(), List.of());
+        source.clear();
+        manager.flushTick();
+        assertEquals(0L, manager.canonicalHash(PEER, ReplicationTestStream.stream(world.getUID(), world, chunkKey)));
+        assertTrue(source.sentCount(PEER) >= 1);
+        WireMessage diffMessage = source.sentTo(PEER).get(0);
+        assertTrue(diffMessage instanceof WireMessage.ChunkDiff);
+        WireMessage.ChunkDiff diff = (WireMessage.ChunkDiff) diffMessage;
+        for (ChunkDiffBatch batch : diff.batches()) {
+            RemoteChunkStore.ApplyOutcome outcome = sink.applyDiff(batch);
+            assertTrue(outcome.applied());
+        }
+    }
+
+    @Test
+    void forgedDivergenceDetectedByHashProbe(@TempDir Path dir) throws IOException {
+        TestNetworkSink source = new TestNetworkSink(dir);
+        ChunkReplicationManager manager = source.getReplicationManager();
+        World world = StubWorld.create(UUID.randomUUID());
+        long chunkKey = CellKeys.chunkKey(0, 0);
+        manager.subscribe(PEER, world.getUID(), world.getUID(), ReplicationTestStream.stream(world.getUID(), world, chunkKey));
+        byte[] bulkPayload = synthesizeBulkPayload(0, 0, 17L);
+        manager.sendBulk(PEER, world.getUID(), ReplicationTestStream.stream(world.getUID(), world, chunkKey), bulkPayload, contentHashOf(bulkPayload));
+
+        RemoteChunkStore sink = new RemoteChunkStore(BukkitRemoteViewCodec.INSTANCE::blockEntityCandidate, RemoteChunkStore.Options.defaults());
+        byte[] tamperedPayload = synthesizeBulkPayload(0, 0, 99L);
+        sink.applyBulk(new ChunkBulk(ReplicationTestStream.stream(world.getUID(), world, chunkKey), 1L, tamperedPayload));
+        assertNotEquals(manager.canonicalHash(PEER, ReplicationTestStream.stream(world.getUID(), world, chunkKey)), sink.hashAt(ReplicationTestStream.stream(world.getUID(), world, chunkKey)));
+
+        List<ChunkHashProbe.ChunkHashEntry> probe = List.of(
+            new ChunkHashProbe.ChunkHashEntry(ReplicationTestStream.stream(world.getUID(), world, chunkKey), 1L, manager.canonicalHash(PEER, ReplicationTestStream.stream(world.getUID(), world, chunkKey))));
+        List<ReplicationStreamKey> mismatches = sink.mismatches(probe);
+        assertEquals(1, mismatches.size());
+        assertEquals(chunkKey, mismatches.get(0).chunkKey());
+    }
+
+    @Test
+    void sequenceGapTriggersResyncRequest(@TempDir Path dir) throws IOException {
+        RemoteChunkStore sink = new RemoteChunkStore(BukkitRemoteViewCodec.INSTANCE::blockEntityCandidate, new RemoteChunkStore.Options(4, 50L));
+        long chunkKey = CellKeys.chunkKey(0, 0);
+        ReplicationStreamKey stream = ReplicationTestStream.stream(chunkKey);
+        sink.applyBulk(new ChunkBulk(stream, 1L, synthesizeBulkPayload(0, 0, 1L)));
+
+        ChunkDiffBatch leap = new ChunkDiffBatch(stream, 10L,
+            List.of(new BlockChange(BlockChange.pack(0, 60, 0), "minecraft:dirt", BlockChange.FLAG_NONE)),
+            List.<LightDiff>of(),
+            List.<BlockEntityDiff>of());
+        sink.applyDiff(leap);
+        try {
+            Thread.sleep(100L);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
+        List<ChunkResyncRequest> requests = sink.collectTimeouts(System.currentTimeMillis());
+        assertEquals(1, requests.size());
+        assertEquals(chunkKey, requests.get(0).stream().chunkKey());
+    }
+
+    @Test
+    void resyncReBulksAfterTamper(@TempDir Path dir) throws IOException {
+        TestNetworkSink source = new TestNetworkSink(dir);
+        ChunkReplicationManager manager = source.getReplicationManager();
+        World world = StubWorld.create(UUID.randomUUID());
+        long chunkKey = CellKeys.chunkKey(1, 1);
+        manager.subscribe(PEER, world.getUID(), world.getUID(), ReplicationTestStream.stream(world.getUID(), world, chunkKey));
+        byte[] bulkPayload = synthesizeBulkPayload(1, 1, 5L);
+        manager.sendBulk(PEER, world.getUID(), ReplicationTestStream.stream(world.getUID(), world, chunkKey), bulkPayload, contentHashOf(bulkPayload));
+        assertTrue(manager.isBulked(PEER, ReplicationTestStream.stream(world.getUID(), world, chunkKey)));
+
+        manager.requestResync(PEER, ReplicationTestStream.stream(world.getUID(), world, chunkKey));
+        assertFalse(manager.isBulked(PEER, ReplicationTestStream.stream(world.getUID(), world, chunkKey)));
+
+        byte[] refreshed = synthesizeBulkPayload(1, 1, 5L);
+        manager.sendBulk(PEER, world.getUID(), ReplicationTestStream.stream(world.getUID(), world, chunkKey), refreshed, contentHashOf(refreshed));
+        assertTrue(manager.isBulked(PEER, ReplicationTestStream.stream(world.getUID(), world, chunkKey)));
+        assertEquals(2L, manager.statsSnapshot().bulkSent());
+    }
+
+    private static long contentHashOf(byte[] payload) {
+        try {
+            return ViewSlice.read(new java.io.DataInputStream(new java.io.ByteArrayInputStream(payload))).contentHash();
+        } catch (java.io.IOException ex) {
+            throw new AssertionError(ex);
+        }
+    }
+
+    private static byte[] synthesizeBulkPayload(int chunkX, int chunkZ, long seed) throws IOException {
+        int sizeX = 16;
+        int sizeY = 24;
+        int sizeZ = 16;
+        int cells = sizeX * sizeY * sizeZ;
+        int minX = chunkX << 4;
+        int minZ = chunkZ << 4;
+        Random rng = new Random(seed);
+        short[] indices = new short[cells];
+        byte[] light = new byte[cells];
+        short[] biomes = new short[ViewSlice.biomeGridSpan(minX, sizeX) * ViewSlice.biomeGridSpan(60, sizeY) * ViewSlice.biomeGridSpan(minZ, sizeZ)];
+        for (int i = 0; i < cells; i++) {
+            indices[i] = (short) (rng.nextInt(2));
+            light[i] = (byte) rng.nextInt(16);
+        }
+        List<String> palette = new ArrayList<>(List.of("minecraft:stone", "minecraft:dirt"));
+        List<String> biomePalette = new ArrayList<>(List.of("minecraft:plains"));
+        ViewSlice slice = new ViewSlice(minX, 60, minZ, sizeX, sizeY, sizeZ, palette, indices, light, biomePalette, biomes);
+        return ChunkBulkBuilder.encodeSliceBytes(slice);
+    }
+}

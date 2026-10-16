@@ -1,0 +1,9 @@
+{
+  "type": "minecraft:function",
+  "function": "wormholes:seamless_validation",
+  "environment": "wormholes:seamless_validation",
+  "structure": "wormholes:empty",
+  "max_ticks": 4000,
+  "setup_ticks": 5,
+  "sky_access": true
+}

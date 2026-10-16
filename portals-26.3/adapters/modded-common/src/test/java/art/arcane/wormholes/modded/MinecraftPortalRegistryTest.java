@@ -1,0 +1,495 @@
+package art.arcane.wormholes.modded;
+
+import art.arcane.optics.crossing.GravityFrame;
+import art.arcane.optics.crossing.ScaleRule;
+
+import art.arcane.wormholes.rules.RuleDocument;
+import art.arcane.wormholes.nexus.NetworkMember;
+import art.arcane.optics.plate.ChunkLease;
+import art.arcane.optics.plate.ChunkLeaseRegistry;
+import art.arcane.optics.crossing.PlaneCrossing;
+import art.arcane.optics.frame.OpticTransform;
+import art.arcane.optics.math.Vec3d;
+import art.arcane.wormholes.portal.PortalType;
+import art.arcane.wormholes.portal.rtp.MinecraftRtpRuntime;
+import art.arcane.wormholes.network.MinecraftPlayerHandoffs;
+import art.arcane.wormholes.network.MinecraftEntityTransfers;
+import art.arcane.wormholes.modded.clientview.MinecraftClientViewService;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.players.PlayerList;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.portal.TeleportTransition;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+import org.mockito.InOrder;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Predicate;
+import java.util.stream.Stream;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doCallRealMethod;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+public class MinecraftPortalRegistryTest extends MinecraftTestBase {
+    @Rule
+    public TemporaryFolder directory = new TemporaryFolder();
+
+    @Test
+    public void nativeGravityAndScalePairsRequireSyncAtBothEnds() throws Exception {
+        Fixture fixture = fixture();
+        try (MinecraftPortalRegistry registry = fixture.registry()) {
+            MinecraftPortal source = create(registry, fixture.level(), 0);
+            MinecraftPortal destination = create(registry, fixture.level(), 10);
+            registry.link(fixture.actor(), source.getId(), destination.getId());
+            registry.link(fixture.actor(), destination.getId(), source.getId());
+            source.setSettingsSyncEnabled(false);
+            destination.setSettingsSyncEnabled(false);
+            registry.update(fixture.actor(), source.getId(), portal -> portal.setGravityRotationEnabled(true));
+            assertTrue(source.isSettingsSyncEnabled());
+            assertTrue(destination.isSettingsSyncEnabled());
+            registry.update(fixture.actor(), destination.getId(), portal -> portal.setSettingsSyncEnabled(false));
+            assertTrue(destination.isSettingsSyncEnabled());
+
+            source.setGravityRotationEnabled(false);
+            source.setSettingsSyncEnabled(false);
+            destination.setSettingsSyncEnabled(false);
+            registry.update(fixture.actor(), source.getId(), portal -> portal.setScaleRule(ScaleRule.motion()));
+            assertTrue(source.isSettingsSyncEnabled());
+            assertTrue(destination.isSettingsSyncEnabled());
+            registry.update(fixture.actor(), source.getId(), portal -> portal.setSettingsSyncEnabled(false));
+            assertTrue(source.isSettingsSyncEnabled());
+
+            source.setScaleRule(ScaleRule.OFF);
+            registry.update(fixture.actor(), source.getId(), portal -> portal.setSettingsSyncEnabled(false));
+            registry.update(fixture.actor(), destination.getId(), portal -> portal.setSettingsSyncEnabled(false));
+            assertFalse(source.isSettingsSyncEnabled());
+            assertFalse(destination.isSettingsSyncEnabled());
+        }
+    }
+
+    @Test
+    public void reloadPreservesLinksSparseCellsAndStablePermissionIdentity() throws Exception {
+        Fixture fixture = fixture();
+        UUID first;
+        UUID second;
+        try (MinecraftPortalRegistry registry = fixture.registry()) {
+            MinecraftPortal source = create(registry, fixture.level(), 0);
+            MinecraftPortal destination = create(registry, fixture.level(), 10);
+            first = source.getId();
+            second = destination.getId();
+            assertTrue(registry.link(fixture.actor(), first, second));
+            String permissionKey = (String) source.setting("access.permissionKey");
+            assertTrue(registry.update(fixture.actor(), first, portal -> portal.setName("Renamed")));
+            assertEquals(permissionKey, source.setting("access.permissionKey"));
+        }
+        try (MinecraftPortalRegistry loaded = new MinecraftPortalRegistry(fixture.runtime(), options())) {
+            loaded.load();
+            assertEquals(2, loaded.snapshot().size());
+            MinecraftPortal source = loaded.get(first);
+            assertEquals("Renamed", source.getName());
+            assertEquals(second, source.getDestinationId());
+            assertFalse(source.getGeometry().containsBlock(0, 65, 0));
+            assertEquals(2, source.getGeometry().getBlockPositions().size());
+        }
+    }
+
+    @Test
+    public void unlinkWhileDestinationChunkLoadsCancelsTheCrossing() throws Exception {
+        Fixture fixture = fixture();
+        try (MinecraftPortalRegistry registry = fixture.registry()) {
+            MinecraftPortal source = create(registry, fixture.level(), 0);
+            MinecraftPortal destination = create(registry, fixture.level(), 10);
+            registry.link(fixture.actor(), source.getId(), destination.getId());
+            registry.tick();
+            registry.link(fixture.actor(), source.getId(), null);
+            fixture.ready().complete(true);
+            fixture.tasks().removeFirst().run();
+            verify(fixture.entity(), never()).teleport(any(TeleportTransition.class));
+            verify(fixture.lease()).close();
+        }
+    }
+
+    @Test
+    public void leavingTheCapturedPositionWhileLoadingCancelsTheCrossing() throws Exception {
+        Fixture fixture = fixture();
+        try (MinecraftPortalRegistry registry = fixture.registry()) {
+            MinecraftPortal source = create(registry, fixture.level(), 0);
+            MinecraftPortal destination = create(registry, fixture.level(), 10);
+            registry.link(fixture.actor(), source.getId(), destination.getId());
+            registry.tick();
+            when(fixture.entity().position()).thenReturn(new Vec3(100, 64.2, 0.2));
+            fixture.ready().complete(true);
+            fixture.tasks().removeFirst().run();
+            verify(fixture.entity(), never()).teleport(any(TeleportTransition.class));
+            verify(fixture.lease()).close();
+        }
+    }
+
+    @Test
+    public void readyChunkCommitsFrameTransformedNativeTeleport() throws Exception {
+        Fixture fixture = fixture();
+        try (MinecraftPortalRegistry registry = fixture.registry()) {
+            MinecraftPortal source = create(registry, fixture.level(), 0);
+            MinecraftPortal destination = create(registry, fixture.level(), 10);
+            registry.link(fixture.actor(), source.getId(), destination.getId());
+            when(fixture.entity().teleport(any(TeleportTransition.class))).thenAnswer(invocation -> {
+                TeleportTransition transition = invocation.getArgument(0);
+                assertEquals(10.1D, transition.position().x, 1e-9D);
+                assertEquals(-0.4D, transition.deltaMovement().x, 1e-9D);
+                assertEquals(fixture.level(), transition.newLevel());
+                return fixture.entity();
+            });
+            registry.tick();
+            verify(fixture.entity(), never()).teleport(any(TeleportTransition.class));
+            fixture.ready().complete(true);
+            fixture.tasks().removeFirst().run();
+            InOrder order = inOrder(fixture.runtime().clientViews(), fixture.entity());
+            order.verify(fixture.runtime().clientViews()).entityCrossed(eq(fixture.entity()), any(PlaneCrossing.class), any(OpticTransform.class),
+                eq(new Vec3d(-0.4D, 0.0D, 0.0D)), eq(GravityFrame.WORLD));
+            order.verify(fixture.entity()).teleport(any(TeleportTransition.class));
+            verify(fixture.lease()).close();
+        }
+    }
+
+    @Test
+    public void declinedPreparedCrossingOutsideCaptureZoneStillUsesItsOwnReceiver() throws Exception {
+        Fixture fixture = fixture();
+        ServerPlayer player = traveler(fixture);
+        MinecraftClientViewService views = mock(MinecraftClientViewService.class);
+        when(fixture.runtime().clientViews()).thenReturn(views);
+        try (MinecraftPortalRegistry registry = fixture.registry()) {
+            MinecraftPortal source = create(registry, fixture.level(), 0);
+            MinecraftPortal destination = create(registry, fixture.level(), 10);
+            registry.link(fixture.actor(), source.getId(), destination.getId());
+            when(views.deferTravel(player.getUUID(), source.getId())).thenReturn(true);
+            registry.tick();
+            verify(fixture.lease(), never()).ready();
+            when(player.position()).thenReturn(new Vec3(-12, 64.2D, 0.2D));
+            when(fixture.level().getEntities((Entity) isNull(), any(AABB.class), any(Predicate.class))).thenReturn(List.of());
+            when(views.deferTravel(player.getUUID(), source.getId())).thenReturn(false);
+            registry.tick();
+            verify(fixture.lease()).ready();
+        }
+    }
+
+    @Test
+    public void sameWorldDoorArrivalCannotSweepOrReplayIntoNearbyPortalReceiver() throws Exception {
+        Fixture fixture = fixture();
+        ServerPlayer player = traveler(fixture);
+        MinecraftClientViewService views = mock(MinecraftClientViewService.class);
+        when(fixture.runtime().clientViews()).thenReturn(views);
+        try (MinecraftPortalRegistry registry = fixture.registry()) {
+            MinecraftPortal source = create(registry, fixture.level(), 0);
+            MinecraftPortal destination = create(registry, fixture.level(), 10);
+            registry.link(fixture.actor(), source.getId(), destination.getId());
+            when(views.deferTravel(player.getUUID(), source.getId())).thenReturn(true);
+            registry.tick();
+            when(player.position()).thenReturn(new Vec3(-5, 64.2D, 0.2D));
+            fixture.runtime().travelArrived(player);
+            when(views.deferTravel(player.getUUID(), source.getId())).thenReturn(false);
+            registry.tick();
+            verify(fixture.lease(), never()).ready();
+            verify(fixture.runtime().doors()).recordTeleport(player);
+        }
+    }
+
+    @Test
+    public void authoritativeSameWorldWarpAcrossAPlaneCannotCreateANewPhysicalCrossing() throws Exception {
+        Fixture fixture = fixture();
+        ServerPlayer player = traveler(fixture);
+        try (MinecraftPortalRegistry registry = fixture.registry()) {
+            MinecraftPortal source = create(registry, fixture.level(), 0);
+            MinecraftPortal destination = create(registry, fixture.level(), 10);
+            registry.link(fixture.actor(), source.getId(), destination.getId());
+            when(player.position()).thenReturn(new Vec3(2, 64.2D, 0.2D));
+            when(fixture.level().getEntities((Entity) isNull(), any(AABB.class), any(Predicate.class))).thenReturn(List.of());
+            registry.tick();
+            when(player.position()).thenReturn(new Vec3(-2, 64.2D, 0.2D));
+            fixture.runtime().travelArrived(player);
+            when(fixture.level().getEntities((Entity) isNull(), any(AABB.class), any(Predicate.class))).thenReturn(List.of(player));
+            registry.tick();
+            verify(fixture.lease(), never()).ready();
+        }
+    }
+
+    @Test
+    public void retargetedDeferredEntranceCannotReplayIntoTheNewReceiver() throws Exception {
+        Fixture fixture = fixture();
+        ServerPlayer player = traveler(fixture);
+        MinecraftClientViewService views = mock(MinecraftClientViewService.class);
+        when(fixture.runtime().clientViews()).thenReturn(views);
+        try (MinecraftPortalRegistry registry = fixture.registry()) {
+            MinecraftPortal source = create(registry, fixture.level(), 0);
+            MinecraftPortal destination = create(registry, fixture.level(), 10);
+            MinecraftPortal replacement = create(registry, fixture.level(), 20);
+            registry.link(fixture.actor(), source.getId(), destination.getId());
+            when(views.deferTravel(player.getUUID(), source.getId())).thenReturn(true);
+            registry.tick();
+            registry.link(fixture.actor(), source.getId(), replacement.getId());
+            when(player.position()).thenReturn(new Vec3(-12, 64.2D, 0.2D));
+            when(fixture.level().getEntities((Entity) isNull(), any(AABB.class), any(Predicate.class))).thenReturn(List.of());
+            when(views.deferTravel(player.getUUID(), source.getId())).thenReturn(false);
+            registry.tick();
+            verify(fixture.lease(), never()).ready();
+        }
+    }
+
+    @Test
+    public void authoritativeDoorArrivalInvalidatesAnAlreadyLoadingPortalDeparture() throws Exception {
+        Fixture fixture = fixture();
+        try (MinecraftPortalRegistry registry = fixture.registry()) {
+            MinecraftPortal source = create(registry, fixture.level(), 0);
+            MinecraftPortal destination = create(registry, fixture.level(), 10);
+            registry.link(fixture.actor(), source.getId(), destination.getId());
+            registry.tick();
+            fixture.runtime().travelArrived(fixture.entity());
+            fixture.ready().complete(true);
+            fixture.tasks().removeFirst().run();
+            verify(fixture.entity(), never()).teleport(any(TeleportTransition.class));
+            verify(fixture.lease()).close();
+        }
+    }
+
+    private ServerPlayer traveler(Fixture fixture) {
+        ServerPlayer player = worldGravity(mock(ServerPlayer.class));
+        when(player.getUUID()).thenReturn(UUID.randomUUID());
+        when(player.getRootVehicle()).thenReturn(player);
+        when(player.level()).thenReturn(fixture.level());
+        when(player.position()).thenReturn(new Vec3(0.1D, 64.2D, 0.2D));
+        when(player.getDeltaMovement()).thenReturn(new Vec3(-0.4D, 0, 0));
+        when(player.getLookAngle()).thenReturn(new Vec3(-1, 0, 0));
+        when(player.isAlive()).thenReturn(true);
+        when(player.getPassengers()).thenReturn(List.of());
+        when(player.getSelfAndPassengers()).thenAnswer(ignored -> Stream.of(player));
+        when(player.getInterpolation()).thenReturn(MinecraftTestAccess.idleInterpolation());
+        when(player.getBoundingBox()).thenReturn(new AABB(0, 64, 0, 0.5D, 65, 0.5D));
+        player.xo = 1;
+        player.yo = 64.2D;
+        player.zo = 0.2D;
+        when(fixture.runtime().server().getPlayerList().getPlayers()).thenReturn(List.of(player));
+        when(fixture.level().getEntities((Entity) isNull(), any(AABB.class), any(Predicate.class))).thenReturn(List.of(player));
+        return player;
+    }
+
+    @Test
+    public void apiResolverDestinationSurvivesChunkPreparationWithoutStoredLink() throws Exception {
+        Fixture fixture = fixture();
+        try (MinecraftPortalRegistry registry = fixture.registry()) {
+            MinecraftPortal source = create(registry, fixture.level(), 0);
+            MinecraftPortal destination = create(registry, fixture.level(), 10);
+            MinecraftWormholesApi api = mock(MinecraftWormholesApi.class);
+            when(fixture.runtime().api()).thenReturn(api);
+            when(api.hasResolvers()).thenReturn(true);
+            when(api.resolve(source, fixture.entity().getUUID())).thenReturn(new NetworkMember(destination.getId(), "", "", 0, null));
+            when(fixture.entity().teleport(any(TeleportTransition.class))).thenReturn(fixture.entity());
+            registry.tick();
+            fixture.ready().complete(true);
+            fixture.tasks().removeFirst().run();
+            verify(fixture.entity()).teleport(any(TeleportTransition.class));
+            assertEquals(null, source.getDestinationId());
+            verify(fixture.lease()).close();
+        }
+    }
+
+    @Test
+    public void bouncingPortalReflectsMotionWithoutLoadingDestination() throws Exception {
+        Fixture fixture = fixture();
+        try (MinecraftPortalRegistry registry = fixture.registry()) {
+            MinecraftPortal source = create(registry, fixture.level(), 0);
+            MinecraftPortal destination = create(registry, fixture.level(), 10);
+            registry.link(fixture.actor(), source.getId(), destination.getId());
+            source.setBounce(true);
+            registry.tick();
+            verify(fixture.entity()).setDeltaMovement(argThat(velocity ->
+                Math.abs(velocity.x - 0.4D) < 1e-9D && velocity.y == 0 && velocity.z == 0));
+            verify(fixture.lease(), never()).ready();
+            verify(fixture.entity(), never()).teleport(any(TeleportTransition.class));
+        }
+    }
+
+    @Test
+    public void membraneRefusesBackFaceBeforeLoadingDestination() throws Exception {
+        Fixture fixture = fixture();
+        try (MinecraftPortalRegistry registry = fixture.registry()) {
+            MinecraftPortal source = create(registry, fixture.level(), 0);
+            MinecraftPortal destination = create(registry, fixture.level(), 10);
+            registry.link(fixture.actor(), source.getId(), destination.getId());
+            source.setMembrane(true);
+            fixture.entity().xo = 0.1D;
+            when(fixture.entity().position()).thenReturn(new Vec3(1, 64.2D, 0.2D));
+            when(fixture.entity().getDeltaMovement()).thenReturn(new Vec3(0.4D, 0, 0));
+            registry.tick();
+            verify(fixture.lease(), never()).ready();
+            verify(fixture.entity(), never()).teleport(any(TeleportTransition.class));
+        }
+    }
+
+    @Test
+    public void atomicWriterReplacesDocumentAndLeavesNoTemporaryFile() throws Exception {
+        Path file = directory.getRoot().toPath().resolve("bucket/portal.json");
+        MinecraftPortalRegistry.write(file, "first");
+        MinecraftPortalRegistry.write(file, "second");
+        assertEquals("second", Files.readString(file));
+        try (Stream<Path> files = Files.list(file.getParent())) {
+            assertEquals(List.of(file), files.toList());
+        }
+    }
+
+    @Test
+    public void repeatedAtomicReplacementsRetainLatestDocument() throws Exception {
+        Path file = directory.getRoot().toPath().resolve("bucket/repeated.json");
+        for (int revision = 0; revision < 100; revision++) {
+            MinecraftPortalRegistry.write(file, "revision " + revision);
+            assertEquals("revision " + revision, Files.readString(file));
+        }
+        try (Stream<Path> files = Files.list(file.getParent())) {
+            assertEquals(List.of(file), files.toList());
+        }
+    }
+
+    private MinecraftPortal create(MinecraftPortalRegistry registry, ServerLevel level, int x) {
+        return registry.create(UUID.randomUUID(), level, List.of(new BlockPos(x, 64, 0), new BlockPos(x, 66, 0)),
+            PortalType.PORTAL, new Vec3(1, 0, 0));
+    }
+
+    @Test public void loadingOldRailDecorationPreservesThePairAndPersistsItsRemoval() throws Exception {
+        Fixture original=fixture();UUID sourceId,destinationId;
+        try(MinecraftPortalRegistry registry=original.registry()) {
+            MinecraftPortal source=create(registry,original.level(),0),destination=create(registry,original.level(),10);
+            registry.link(original.actor(),source.getId(),destination.getId());
+            registry.link(original.actor(),destination.getId(),source.getId());
+            source.setSurfaceSkin("minecraft:powered_rail[shape=north_south,powered=false,waterlogged=false]");
+            registry.save(source);sourceId=source.getId();destinationId=destination.getId();
+        }
+        Fixture restored=fixture();
+        try(MinecraftPortalRegistry registry=restored.registry()) {
+            registry.load();
+            assertEquals("",registry.get(sourceId).getSurfaceSkin());
+            assertEquals(destinationId,registry.get(sourceId).getDestinationId());
+            assertEquals(sourceId,registry.get(destinationId).getDestinationId());
+        }
+        try(Stream<Path> files=Files.walk(directory.getRoot().toPath())) {
+            for(Path file:files.filter(p->p.toString().endsWith(".json")).toList()) {
+                assertFalse(Files.readString(file).contains("minecraft:powered_rail"));
+            }
+        }
+    }
+
+    private MinecraftPortalRegistry.Options options() {
+        return new MinecraftPortalRegistry.Options(directory.getRoot().toPath(), new MinecraftPortalRegistry.Access() {
+            @Override
+            public boolean administrator(ServerPlayer player) {
+                return true;
+            }
+
+            @Override
+            public boolean permission(ServerPlayer player, String node) {
+                return false;
+            }
+
+            @Override
+            public boolean nameAlias() {
+                return true;
+            }
+        });
+    }
+
+    @SuppressWarnings("unchecked")
+    private Fixture fixture() {
+        WormholesModRuntime runtime = mock(WormholesModRuntime.class);
+        when(runtime.nexus()).thenReturn(mock(MinecraftNexus.class));
+        when(runtime.menus()).thenReturn(mock(MinecraftPortalMenus.class));
+        when(runtime.doors()).thenReturn(mock(MinecraftDoorService.class));
+        doCallRealMethod().when(runtime).travelArrived(any(Entity.class));
+        MinecraftNetworkService network = mock(MinecraftNetworkService.class);
+        when(runtime.network()).thenReturn(network);
+        when(runtime.rtp()).thenReturn(mock(MinecraftRtpRuntime.class));
+        when(runtime.clientViews()).thenReturn(mock(MinecraftClientViewService.class));
+        when(network.handoffs()).thenReturn(mock(MinecraftPlayerHandoffs.class));
+        when(network.entityTransfers()).thenReturn(mock(MinecraftEntityTransfers.class));
+        MinecraftRules rules = mock(MinecraftRules.class);
+        when(runtime.rules()).thenReturn(rules);
+        when(rules.document(any())).thenReturn(RuleDocument.EMPTY);
+        when(rules.screeningAllowed(any(), any())).thenReturn(true);
+        when(rules.depart(any(), any(), any())).thenReturn(true);
+        when(rules.arrivalAllowed(any(), any(), anyBoolean())).thenReturn(true);
+        when(rules.reserve(any(), any())).thenReturn(true);
+        MinecraftServer server = mock(MinecraftServer.class);
+        ServerLevel level = mock(ServerLevel.class);
+        ServerPlayer actor = worldGravity(mock(ServerPlayer.class));
+        Entity entity = worldGravity(mock(Entity.class));
+        PlayerList players = mock(PlayerList.class);
+        WormholesModConfiguration configuration = mock(WormholesModConfiguration.class);
+        ChunkLeaseRegistry<ServerLevel> leases = mock(ChunkLeaseRegistry.class);
+        ChunkLease lease = mock(ChunkLease.class);
+        CompletableFuture<Boolean> ready = new CompletableFuture<>();
+        List<Runnable> tasks = new ArrayList<>();
+        when(runtime.server()).thenReturn(server);
+        when(runtime.configuration()).thenReturn(configuration);
+        when(configuration.settings()).thenReturn(MinecraftTestSettings.defaults());
+        when(server.getAllLevels()).thenReturn(List.of(level));
+        when(server.getPlayerList()).thenReturn(players);
+        when(players.getPlayers()).thenReturn(List.of());
+        when(level.dimension()).thenReturn(Level.OVERWORLD);
+        when(level.getMinY()).thenReturn(-64);
+        when(level.getMaxY()).thenReturn(320);
+        when(level.getEntities((Entity) isNull(), any(AABB.class), any(Predicate.class))).thenReturn(List.of(entity));
+        when(actor.getUUID()).thenReturn(UUID.randomUUID());
+        when(entity.getUUID()).thenReturn(UUID.randomUUID());
+        when(entity.getRootVehicle()).thenReturn(entity);
+        when(entity.level()).thenReturn(level);
+        when(entity.position()).thenReturn(new Vec3(0.1, 64.2, 0.2));
+        when(entity.getDeltaMovement()).thenReturn(new Vec3(-0.4, 0, 0));
+        when(entity.getLookAngle()).thenReturn(new Vec3(-1, 0, 0));
+        when(entity.isAlive()).thenReturn(true);
+        when(entity.getPassengers()).thenReturn(List.of());
+        when(entity.getSelfAndPassengers()).thenAnswer(ignored -> Stream.of(entity));
+        when(entity.getInterpolation()).thenReturn(MinecraftTestAccess.idleInterpolation());
+        when(entity.getBoundingBox()).thenReturn(new AABB(0, 64, 0, 0.5, 65, 0.5));
+        entity.xo = 1;
+        entity.yo = 64.2;
+        entity.zo = 0.2;
+        when(runtime.leases()).thenReturn(leases);
+        when(leases.retain(any(), any(), anyInt(), anyInt())).thenReturn(lease);
+        when(lease.ready()).thenReturn(ready);
+        doAnswer(invocation -> {
+            tasks.add(invocation.getArgument(0));
+            return null;
+        }).when(server).execute(any(Runnable.class));
+        MinecraftPortalRegistry registry = new MinecraftPortalRegistry(runtime, options());
+        when(runtime.portals()).thenReturn(registry);
+        return new Fixture(runtime, registry, level, actor, entity, lease, ready, tasks);
+    }
+
+    private record Fixture(WormholesModRuntime runtime, MinecraftPortalRegistry registry, ServerLevel level,
+                           ServerPlayer actor, Entity entity, ChunkLease lease, CompletableFuture<Boolean> ready,
+                           List<Runnable> tasks) {
+    }
+}

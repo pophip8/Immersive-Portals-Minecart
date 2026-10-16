@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "id": "wormholes_clientgametest",
+  "version": "${version}",
+  "name": "Wormholes Client GameTest",
+  "description": "Through-portal projection and traversal.",
+  "authors": [
+    "Volmit Software"
+  ],
+  "license": "GPL-3.0",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-client-gametest": [
+      "art.arcane.wormholes.clientgametest.PortalHorizonClientGameTest",
+      "art.arcane.wormholes.clientgametest.PortalRotationClientGameTest",
+      "art.arcane.wormholes.clientgametest.AngledCrossingClientGameTest",
+      "art.arcane.wormholes.clientgametest.EmbeddedFloorPortalClientGameTest",
+      "art.arcane.wormholes.clientgametest.RecursivePortalEntitiesClientGameTest",
+      "art.arcane.wormholes.clientgametest.MirrorWaterClientGameTest",
+      "art.arcane.wormholes.clientgametest.ApertureShapeClientGameTest",
+      "art.arcane.wormholes.clientgametest.DimensionalDoorClientGameTest",
+      "art.arcane.wormholes.clientgametest.SeamlessFallLoopClientGameTest",
+      "art.arcane.wormholes.clientgametest.VerticalCameraLoopAcceptanceClientGameTest",
+      "art.arcane.wormholes.clientgametest.GravityPortalAcceptanceClientGameTest",
+      "art.arcane.wormholes.clientgametest.NestedHorizontalPortalAcceptanceClientGameTest",
+      "art.arcane.wormholes.clientgametest.ScaledPairClientGameTest",
+      "art.arcane.wormholes.clientgametest.AdjacentSourcePortalsClientGameTest"
+    ],
+    "wormholes-gravity-movement-gametest": [
+      "art.arcane.wormholes.clientgametest.GravityMovementAcceptanceClientGameTest"
+    ],
+    "wormholes-compatibility-gametest": [
+      "art.arcane.wormholes.clientgametest.ClientViewClientGameTest",
+      "art.arcane.wormholes.clientgametest.ClientViewSceneClientGameTest",
+      "art.arcane.wormholes.clientgametest.ClientViewLightClientGameTest",
+      "art.arcane.wormholes.clientgametest.ClientViewMirrorClientGameTest",
+      "art.arcane.wormholes.clientgametest.SeamlessSameDimensionClientGameTest",
+      "art.arcane.wormholes.clientgametest.SeamlessCrossDimensionClientGameTest",
+      "art.arcane.wormholes.clientgametest.CrossingCompositionClientGameTest",
+      "art.arcane.wormholes.clientgametest.ArrivalTerrainClientGameTest",
+      "art.arcane.wormholes.clientgametest.NetherCrossingCompositionClientGameTest",
+      "art.arcane.wormholes.clientgametest.NetherCrossingEffectsClientGameTest",
+      "art.arcane.wormholes.clientgametest.RotatedNetherPairClientGameTest",
+      "art.arcane.wormholes.clientgametest.CardinalLightingClientGameTest",
+      "art.arcane.wormholes.clientgametest.SeamlessWalkThroughClientGameTest",
+      "art.arcane.wormholes.clientgametest.LookContinuityClientGameTest",
+      "art.arcane.wormholes.clientgametest.SingleplayerStoreClientGameTest"
+    ],
+    "wormholes-vanilla-preparation-gametest": [
+      "art.arcane.wormholes.clientgametest.VanillaPipelinePreparationClientGameTest"
+    ],
+    "wormholes-dh-gametest": [
+      "art.arcane.wormholes.clientgametest.DistantHorizonsClientGameTest"
+    ],
+    "wormholes-shader-gametest": [
+      "art.arcane.wormholes.clientgametest.ShaderOcclusionClientGameTest",
+      "art.arcane.wormholes.clientgametest.ShaderHistoryClientGameTest",
+      "art.arcane.wormholes.clientgametest.ShaderStreamHistoryClientGameTest",
+      "art.arcane.wormholes.clientgametest.ShaderPipelineReuseClientGameTest"
+    ]
+  },
+  "mixins": [
+    "wormholes_clientgametest.mixins.json",
+    "wormholes_look_clientgametest.mixins.json",
+    "wormholes_vanilla_preparation_clientgametest.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=${fabricLoaderVersion}",
+    "minecraft": "${minecraftVersion}",
+    "java": ">=25",
+    "wormholes": "${version}",
+    "fabric-client-gametest-api-v1": "*"
+  }
+}

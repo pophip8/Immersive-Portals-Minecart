@@ -1,0 +1,365 @@
+package art.arcane.volmlib.util.inventorygui;
+
+import art.arcane.volmlib.util.VolmLog;
+import art.arcane.volmlib.util.collection.KList;
+import art.arcane.volmlib.util.data.MaterialBlock;
+import art.arcane.volmlib.util.scheduling.Callback;
+import org.bukkit.Material;
+import org.bukkit.enchantments.Enchantment;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.ItemFlag;
+import org.bukkit.inventory.meta.ItemMeta;
+
+public class UIElement implements Element {
+    private final String id;
+    private final KList<String> lore;
+    private MaterialBlock material;
+    private boolean enchanted;
+    private String name;
+    private boolean nameSet;
+    private double progress;
+    private boolean bg;
+    private Callback<Element> eLeft;
+    private Callback<Element> eRight;
+    private Callback<Element> eMiddle;
+    private Callback<Element> eShiftLeft;
+    private Callback<Element> eShiftRight;
+    private Callback<Element> eDraggedInto;
+    private Callback<Element> eOtherDraggedInto;
+    private int count;
+    private ItemStack baseItemStack;
+
+    public UIElement(String id) {
+        this.id = id;
+        lore = new KList<>();
+        enchanted = false;
+        count = 1;
+        // full progress means undamaged; the 0 default rendered every damageable icon at 1 durability
+        progress = 1D;
+        material = new MaterialBlock(Material.AIR);
+        baseItemStack = null;
+    }
+
+    protected void reportError(Throwable e) {
+        VolmLog.warning("InventoryUI", "Could not build an inventory element", e);
+    }
+
+    @Override
+    public MaterialBlock getMaterial() {
+        return material;
+    }
+
+    @Override
+    public UIElement setMaterial(MaterialBlock material) {
+        this.material = material;
+        return this;
+    }
+
+    public Double clip(double value, double min, double max) {
+        return Math.min(max, Math.max(min, value));
+    }
+
+    @Override
+    public boolean isEnchanted() {
+        return enchanted;
+    }
+
+    @Override
+    public UIElement setEnchanted(boolean enchanted) {
+        this.enchanted = enchanted;
+        return this;
+    }
+
+    @Override
+    public String getId() {
+        return id;
+    }
+
+    @Override
+    public String getName() {
+        return name;
+    }
+
+    @Override
+    public UIElement setName(String name) {
+        this.name = name;
+        nameSet = true;
+        return this;
+    }
+
+    @Override
+    public KList<String> getLore() {
+        return lore;
+    }
+
+    @Override
+    public UIElement onLeftClick(Callback<Element> clicked) {
+        eLeft = clicked;
+        return this;
+    }
+
+    @Override
+    public UIElement onRightClick(Callback<Element> clicked) {
+        eRight = clicked;
+        return this;
+    }
+
+    @Override
+    public UIElement onMiddleClick(Callback<Element> clicked) {
+        eMiddle = clicked;
+        return this;
+    }
+
+    @Override
+    public UIElement onShiftLeftClick(Callback<Element> clicked) {
+        eShiftLeft = clicked;
+        return this;
+    }
+
+    @Override
+    public UIElement onShiftRightClick(Callback<Element> clicked) {
+        eShiftRight = clicked;
+        return this;
+    }
+
+    @Override
+    public UIElement onDraggedInto(Callback<Element> into) {
+        eDraggedInto = into;
+        return this;
+    }
+
+    @Override
+    public UIElement onOtherDraggedInto(Callback<Element> other) {
+        eOtherDraggedInto = other;
+        return this;
+    }
+
+    @Override
+    public Element call(ElementEvent event, Element context) {
+        try {
+            switch (event) {
+                case DRAG_INTO -> {
+                    if (eDraggedInto != null) {
+                        eDraggedInto.run(context);
+                    }
+                    return this;
+                }
+                case LEFT -> {
+                    if (eLeft != null) {
+                        eLeft.run(context);
+                    }
+                    return this;
+                }
+                case OTHER_DRAG_INTO -> {
+                    if (eOtherDraggedInto != null) {
+                        eOtherDraggedInto.run(context);
+                    }
+                    return this;
+                }
+                case RIGHT -> {
+                    if (eRight != null) {
+                        eRight.run(context);
+                    }
+                    return this;
+                }
+                case MIDDLE -> {
+                    if (eMiddle != null) {
+                        eMiddle.run(context);
+                    }
+                    return this;
+                }
+                case SHIFT_LEFT -> {
+                    if (eShiftLeft != null) {
+                        eShiftLeft.run(context);
+                    }
+                    return this;
+                }
+                case SHIFT_RIGHT -> {
+                    if (eShiftRight != null) {
+                        eShiftRight.run(context);
+                    }
+                    return this;
+                }
+            }
+        } catch (Throwable e) {
+            reportError(e);
+        }
+
+        return this;
+    }
+
+    private static final int LORE_WRAP_VISIBLE_WIDTH = 42;
+
+    @Override
+    public Element addLore(String loreLine) {
+        if (loreLine == null) {
+            getLore().add(loreLine);
+            return this;
+        }
+
+        if (loreLine.indexOf('\n') >= 0) {
+            for (String line : loreLine.split("\n", -1)) {
+                addWrappedLore(line);
+            }
+
+            return this;
+        }
+
+        addWrappedLore(loreLine);
+        return this;
+    }
+
+    private void addWrappedLore(String line) {
+        String carry = "";
+        String rest = line;
+
+        while (true) {
+            String candidate = carry.isEmpty() ? rest : carry + rest;
+            int length = candidate.length();
+            int visible = 0;
+            int breakAt = -1;
+            String breakColor = "";
+            StringBuilder color = new StringBuilder();
+            int i = 0;
+
+            while (i < length) {
+                char c = candidate.charAt(i);
+
+                if (c == '§' && i + 1 < length) {
+                    char code = Character.toLowerCase(candidate.charAt(i + 1));
+
+                    if (code == 'x') {
+                        int end = Math.min(length, i + 14);
+                        color.setLength(0);
+                        color.append(candidate, i, end);
+                        i = end;
+                        continue;
+                    }
+
+                    if ((code >= '0' && code <= '9') || (code >= 'a' && code <= 'f')) {
+                        color.setLength(0);
+                        color.append(c).append(candidate.charAt(i + 1));
+                    } else if (code == 'r') {
+                        color.setLength(0);
+                    } else {
+                        color.append(c).append(candidate.charAt(i + 1));
+                    }
+
+                    i += 2;
+                    continue;
+                }
+
+                if (c == ' ' && visible <= LORE_WRAP_VISIBLE_WIDTH && i > 0) {
+                    breakAt = i;
+                    breakColor = color.toString();
+                }
+
+                visible++;
+
+                if (visible > LORE_WRAP_VISIBLE_WIDTH && breakAt >= 0) {
+                    break;
+                }
+
+                i++;
+            }
+
+            if (visible <= LORE_WRAP_VISIBLE_WIDTH || breakAt < 0) {
+                getLore().add(candidate);
+                return;
+            }
+
+            getLore().add(candidate.substring(0, breakAt));
+            carry = breakColor;
+            rest = candidate.substring(breakAt + 1);
+        }
+    }
+
+    @Override
+    public Element setBackground(boolean bg) {
+        this.bg = bg;
+        return this;
+    }
+
+    @Override
+    public boolean isBackgrond() {
+        return bg;
+    }
+
+    @Override
+    public Element setCount(int c) {
+        count = clip(c, 1, 64).intValue();
+        return this;
+    }
+
+    @Override
+    public int getCount() {
+        return count;
+    }
+
+    @Override
+    public ItemStack getBaseItemStack() {
+        return baseItemStack == null ? null : baseItemStack.clone();
+    }
+
+    @Override
+    public UIElement setBaseItemStack(ItemStack itemStack) {
+        baseItemStack = itemStack == null ? null : itemStack.clone();
+        return this;
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
+    public ItemStack computeItemStack() {
+        try {
+            ItemStack is = baseItemStack == null
+                    ? new ItemStack(getMaterial().getMaterial(), getCount(), getEffectiveDurability())
+                    : baseItemStack.clone();
+            is.setAmount(getCount());
+            is.setDurability(getEffectiveDurability());
+            ItemMeta im = is.getItemMeta();
+            if (baseItemStack == null || nameSet) {
+                im.setDisplayName(getName());
+            }
+            if (baseItemStack == null || !lore.isEmpty()) {
+                im.setLore(getLore().copy());
+            }
+
+            if (isEnchanted()) {
+                im.addEnchant(Enchantment.FIRE_ASPECT, 1, true);
+                im.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+            }
+
+            is.setItemMeta(im);
+            return is;
+        } catch (Throwable e) {
+            reportError(e);
+        }
+
+        return null;
+    }
+
+    @Override
+    public Element setProgress(double progress) {
+        this.progress = clip(progress, 0D, 1D);
+        return this;
+    }
+
+    @Override
+    public double getProgress() {
+        return progress;
+    }
+
+    @Override
+    public short getEffectiveDurability() {
+        if (getProgress() >= 1D) {
+            return 0;
+        }
+
+        if (getMaterial().getMaterial().getMaxDurability() == 0) {
+            return 0;
+        } else {
+            int prog = (int) ((double) getMaterial().getMaterial().getMaxDurability() * (1D - getProgress()));
+            return clip(prog, 1, (getMaterial().getMaterial().getMaxDurability() - 1)).shortValue();
+        }
+    }
+}

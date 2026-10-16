@@ -1,0 +1,49 @@
+package art.arcane.wormholes.config.toml;
+
+import art.arcane.wormholes.util.project.config.ConfigDescription;
+import art.arcane.wormholes.util.project.config.ConfigDoc;
+
+@ConfigDoc({
+    "Wormholes settings. Changes hot-reload."
+})
+public class WormholesConfigFile {
+    public static final int CURRENT_SCHEMA = 3;
+
+    @ConfigDescription("Default language for players without an override. Missing official translations download into plugins/Wormholes/languages/<locale>.toml when selected. Blank or invalid locale names use en_US.")
+    public String language = "en_US";
+
+    @ConfigDescription("Send anonymous usage metrics to bStats. Changes apply automatically while the server is running.")
+    public boolean metrics = true;
+
+    @ConfigDescription("Comma-separated official or custom fallback locales in priority order. Missing, blank, or invalid translations then use languages/en_US.toml and finally built-in English. English selection ignores this list.")
+    public String languageFallbacks = "";
+
+    @ConfigDescription("Configuration format.")
+    public int schema = CURRENT_SCHEMA;
+
+    @ConfigDescription("Visual profile: auto, performance, balanced, or cinematic.")
+    public String quality = "auto";
+
+    @ConfigDescription("Checks GitHub releases and includes Wormholes in the shared Volmit update notice. Does not download or install updates.")
+    public boolean updateNotifications = true;
+
+    public MainConfig main = new MainConfig();
+    public NetworkConfig network = new NetworkConfig();
+    public ProjectionConfig projection = new ProjectionConfig();
+    public RecipesConfig recipes = new RecipesConfig();
+    public RenderConfig render = new RenderConfig();
+    public DoorsConfig doors = new DoorsConfig();
+    public PocketsConfig pockets = new PocketsConfig();
+    public RulesConfig rules = new RulesConfig();
+    public AccessConfig access = new AccessConfig();
+    public NexusConfig nexus = new NexusConfig();
+    public AtlasConfig atlas = new AtlasConfig();
+    public TransitConfig transit = new TransitConfig();
+    public AtmosphereConfig atmosphere = new AtmosphereConfig();
+    public AcousticsConfig acoustics = new AcousticsConfig();
+    public LodConfig lod = new LodConfig();
+    public BedrockConfig bedrock = new BedrockConfig();
+    public OpsConfig ops = new OpsConfig();
+    public DimensionalConfig dimensional = new DimensionalConfig();
+    public ClientViewConfig clientView = new ClientViewConfig();
+}

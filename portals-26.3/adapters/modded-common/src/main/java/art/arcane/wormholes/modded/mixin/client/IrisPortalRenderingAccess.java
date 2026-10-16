@@ -1,0 +1,24 @@
+package art.arcane.wormholes.modded.mixin.client;
+
+import net.irisshaders.iris.pipeline.CompositeRenderer;
+import net.irisshaders.iris.gl.buffer.ShaderStorageBufferHolder;
+import net.irisshaders.iris.targets.RenderTargets;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Pseudo;
+import org.spongepowered.asm.mixin.gen.Accessor;
+
+@Pseudo
+@Mixin(targets = "net.irisshaders.iris.pipeline.IrisRenderingPipeline", remap = false)
+public interface IrisPortalRenderingAccess {
+    @Accessor("initializedBlockIds")
+    void wormholes$initializedBlockIds(boolean initialized);
+
+    @Accessor("prepareRenderer")
+    CompositeRenderer wormholes$prepareRenderer();
+
+    @Accessor("shaderStorageBufferHolder")
+    ShaderStorageBufferHolder wormholes$storageBuffers();
+
+    @Accessor("renderTargets")
+    RenderTargets wormholes$renderTargets();
+}

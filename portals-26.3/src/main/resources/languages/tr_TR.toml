@@ -1,0 +1,1576 @@
+# Wormholes — tr_TR
+#
+# === Dosyayı düzenleme ===
+# plugins/Wormholes/languages/tr_TR.toml
+# Bu dosya doğrudan düzenlenebilir. Yerel değişiklikler korunur; eksik, boş veya geçersiz girdiler önce yedek dilleri, ardından İngilizceyi kullanır.
+# /wormholes language server edit tr_TR
+#
+# === Önek ===
+# İleti önekleri ilgili ileti şablonlarının parçasıdır. {prefix}, portal içe aktarma kodunun başlangıcını belirtir.
+#
+# === Biçimlendirme ===
+# Renk kodları: &0-&f; biçimlendirme: &k-&r (&l = kalın, &r = sıfırla). Değişken adlarını koruyun ve yalnızca ilgili mesajlarda kullanın.
+#
+# === Değişkenler ===
+# Değişken adlarını değiştirmeyin ve yalnızca ilgili iletinin değişkenlerini kullanın.
+#   {access}  Portal erişim kuralı
+#   {address}  Uzak düğümün ağ adresi
+#   {after}  Düzenlemeden sonraki ileti değeri
+#   {allocation}  Cep alanı tahsisi
+#  {amount}  para biriminde yolculuk ücreti
+#   {argument}  Beklenmeyen komut argümanı
+#   {before}  Düzenlemeden önceki ileti değeri
+#   {biome}  Biyom kimliği
+#   {blacklisted}  Engellenen oyuncular
+#   {block}  Seçilen blok malzemesi
+#   {blocks}  Yeniden yapımdan etkilenen yerleştirilmiş bloklar
+#   {cancel}  Sohbet girdisini iptal etme sözcüğü
+#   {cells}  Açıklıktaki açık hücre sayısı
+#   {code}  Sunucu veya portal davet kodu
+#   {color}  Seçilen görüntüleme rengi
+#   {command}  Komut yolu
+#   {containers}  Yeniden yapımdan etkilenen dolu kaplar
+#   {cost}  Portal oluşturma veya yolculuk ücreti
+#   {count}  Portal, hedef veya ileti sayısı
+#   {degrees}  Derece cinsinden görüntü dönüşü
+#   {depth}  Yansıtma derinliği
+#   {description}  İleti açıklaması
+#   {destination}  Yolculuk hedefi
+#   {detail}  Ek tanılama ayrıntıları
+#   {diagnostic}  Tanılama iletisi
+#   {direction}  Yolculuk veya bakış yönü
+#   {door}  Cep çıkış kapısı
+#   {duration}  Oyuncuya özel güncelleme aralığı
+#   {endpoint}  Solucan deliği uç noktasının kimliği
+#   {entities}  Etkilenen varlık sayısı veya tik cinsinden varlık güncelleme aralığı
+#   {entity}  Tik cinsinden varlık güncelleme aralığı
+#   {error}  Son işlemin hatası
+#   {facing}  Portalın bakış yönü
+#   {failed}  Başarısız işlem sayısı
+#   {fallback}  Alternatif yolculuk sonucu
+#   {fingerprint}  Açık anahtar parmak izi
+#   {free}  Rastgele hedefler için kullanılabilir yuvalar
+#   {grace}  Saniye cinsinden yansıtma ek süresi
+#   {group}  Dil düzenleyicisi kategorisi
+#   {id}  Nesne kimliği
+#   {incoming}  Gelen yolculuk kuralı
+#   {item}  Yolculuk için gereken eşya
+#   {key}  İleti veya yapılandırma anahtarı
+#   {kind}  Kapı erişim türü
+#   {label}  Görüntülenen etiket
+#   {large_step}  Shift ile tıklandığında değişim miktarı
+#   {line}  İletideki satır numarası
+#   {locale}  Dil kodu
+#   {material}  Cep duvarlarının malzemesi
+#   {maximum}  İzin verilen en yüksek değer
+#   {message}  Geri bildirim iletisi
+#   {minimum}  İzin verilen en düşük değer
+#   {mode}  Yolculuk veya görüntüleme modu
+#   {name}  Portal veya oyuncu adı
+#   {next}  Sonraki kullanılabilir seçenek
+#   {node}  Ağ düğümü kimliği
+#   {none}  Bağlı hedef olmadığını belirten etiket
+#   {other}  Bağlı uç noktanın kimliği
+#   {outgoing}  Giden yolculuk kuralı
+#   {owner}  Portal sahibi
+#   {page}  Geçerli sayfa numarası
+#   {pages}  Toplam sayfa sayısı
+#   {parameter}  Komut parametresinin adı
+#   {path}  Dosya veya dizin yolu
+#   {personal}  Kişisel dil kodu
+#   {plugin}  Eklenti adı
+#   {portal}  Portal adı veya kimliği
+#   {prefix}  Portal içe aktarma kodunun başlangıcı
+#   {previous}  Blok cinsinden önceki cep boyutu
+#   {quality}  Yansıtma akışının kalitesi
+#   {quantity}  Gereken eşya sayısı
+#   {range}  Blok cinsinden portal etkinleştirme menzili
+#   {readiness}  Rastgele hedeflerin hazırlık durumu
+#   {reason}  Hatanın veya kararın nedeni
+#   {receive}  Yansıtma alma durumu
+#   {refresh}  Tik cinsinden yansıtma yenileme aralığı
+#   {reserved}  Rastgele hedefler için ayrılmış yuvalar
+#   {resized}  Yeniden yapılan cep sayısı
+#   {rotation}  Yansıtma dönüşü
+#   {route}  Denenen yolculuk rotası
+#   {rtt}  Ağ gidiş dönüş gecikmesi
+#   {seconds}  Saniye cinsinden süre
+#   {section}  Dil düzenleyicisi bölümü
+#   {send}  Yansıtma gönderme durumu
+#   {server}  Sunucu adı veya kimliği
+#   {shape}  Portal açıklığının şekli
+#   {size}  Blok cinsinden cep boyutu
+#   {skin}  Seçilen portal görünümü
+#   {skipped}  Atlanan işlem sayısı
+#   {space}  Cep alanı kimliği
+#   {state}  Geçerli erişim, bağlantı veya ağ durumu
+#   {step}  Tıklandığında değişim miktarı
+#   {style}  Görüntüleme stili
+#   {target}  Dil seçiminin uygulanacağı eklenti
+#   {type}  Nesne veya parametre türü
+#   {up}  Yansıtmanın üst tarafındaki yön
+#   {value}  Geçerli veya seçilen değer
+#   {variables}  İletide izin verilen değişkenler
+#   {whitelisted}  İzin verilen oyuncular
+#   {world}  Dünya adı
+#   {x}  X koordinatı
+#   {y}  Y koordinatı
+#   {z}  Z koordinatı
+
+[language.editor]
+title = "{plugin} › {section}"
+loading = "{locale} mesajları yükleniyor..."
+
+[language.editor.category]
+message-count = "&7{count} mesaj&r"
+open = "&8Bu kategoriyi açmak için tıklayın.&r"
+
+[language.editor.error]
+no-permission = "{plugin} dillerini düzenleme izniniz yok."
+unable-to-edit = "Düzenlenemedi: {reason}"
+
+[language.editor.input]
+expired = "Dil düzenleyicisinin giriş süresi doldu."
+too-long = "Girdi en fazla {maximum} karakter içerebilir."
+unable-to-save = "Kaydedilemedi: {reason}"
+
+[language.editor.locale]
+open = "&8Bu dili açmak için tıklayın.&r"
+
+[language.editor.message]
+current-value = "&7Mevcut Değer:&r"
+edit-chat = "&7Sohbette düzenlemek için tıklayın.&r"
+edit-lines = "&7Satırları ayrı ayrı düzenlemek için tıklayın.&r"
+edit-plural = "&7Bir çoğul biçimini düzenlemek için tıklayın.&r"
+variables = "&8{variables}&r"
+
+[language.editor.navigation]
+back = "&eGeri&r"
+close = "&cKapat&r"
+next-page = "&eSonraki sayfa&r"
+previous-page = "&eÖnceki Sayfa&r"
+
+[language.editor.part]
+line = "Satır {line}"
+
+[language.editor.prompt]
+current = "Geçerli değer: {value}"
+guidance = "Yeni satır için \\n, ters eğik çizgi için \\\\ kullanın veya geri dönmek için cancel yazın."
+search = "Mesaj anahtarı veya metni arayın. Geri dönmek için cancel yazın."
+value = "Sohbete {key} için yeni bir değer yazın."
+variables = "Değişkenler: {variables}"
+
+[language.editor.saved]
+change = "{key}: “{before}” değeri “{after}” olarak değiştirildi."
+summary = "{locale} kaydedildi. Dil seçimleri değişmedi."
+
+[language.editor.search]
+clear = "Aramayı temizle"
+messages = "Mesajları ara"
+messages-lore = "Tüm mesajları aramak için tıklayın."
+
+[language.editor.section]
+group-title = "{locale} / {group}"
+languages = "Diller"
+search = "Arama"
+search-title = "{locale} / Arama"
+
+[language.editor.value]
+empty = "(boş)"
+none = "Yok"
+
+[language.error]
+editor-player-only = "Oyundaki dil editörü açın."
+no-providers = "Kullanılabilir Volmit dil sağlayıcısı yok."
+numeric-page = "Sayfa numarasını rakamla girin."
+personal-permission = "Dilinizi seçmek için izniniz yok."
+personal-player-only = "Oyuncu dili tercihleri oyunda seçilmelidir."
+plugin-personal-permission = "{plugin} için kendi dilinizi seçme izniniz yok."
+plugin-server-permission = "{plugin} için sunucu dilini değiştirme izniniz yok."
+server-locale-required = "Sunucunun varsayılan dili için en_US gibi bir dil kodu seçin."
+stopping = "Dil seçimi, eklenti durdurulduğunda kullanılamaz."
+unavailable-for-all = "{locale} dili, seçilen eklentilerin tümünde kullanılamıyor."
+
+[language.menu]
+all-volmit-plugins = "Tüm Volmit eklentileri"
+command = "Komut: {command}"
+current = "Geçerli: {locale}"
+current_with_personal = "Geçerli: {locale} (Sizin: {personal})"
+edit_description = "Her dil için mesaj düzenleyicisini açın."
+edit_messages = "Dil mesajlarını düzenle"
+no_controls = "Kullanabileceğiniz dil ayarı yok."
+remove_personal_description = "Kişisel dil seçiminizi kaldırın."
+reset_description = "Sunucunun varsayılan dilini kullanın."
+reset_your_language = "Dil seçiminizi sıfırla"
+select_description = "Bu dili seçmek için tıklayın."
+selected = "Seçili"
+server_default = "Sunucu varsayılanı"
+server_description = "Sunucunun varsayılan dilini değiştirin."
+use_server_default = "Sunucu varsayılanını kullan"
+your_description = "Yalnızca gördüğünüz mesajları değiştirin."
+your_language = "Diliniz"
+
+[language.selection]
+english-fallback = "{plugin}: {locale} kullanılamıyor; İngilizce (en_US) kullanılıyor."
+personal-selected = "{plugin}: Diliniz şimdi {locale}."
+preparing = "{target} için {locale} dili hazırlanıyor..."
+save-failed = "{plugin}: dil seçimi kaydedilemedi; sunucu konsolunu kontrol edin."
+server-default-selected = "{plugin}: diliniz artık sunucunun varsayılan dilini kullanıyor."
+server-selected = "{plugin}: sunucu dili şimdi {locale}."
+
+[language.usage]
+editor = "Kullanım: /{command} language server edit [locale]"
+selection = "Kullanım: /{command} language self [locale|reset] or server [locale]"
+volmit-selection = "Kullanım: /volmit plugins languages [locale]"
+
+[command]
+unknown = "Bilinmeyen komut. Yardım için /wormholes kullanın."
+public_help = ["&8[&6Wormholes&8] &7Portal yardımı: &f/wormholes info", "&8[&6Wormholes&8] &7Hedef, görünüm, seyahat ve erişim ayarlarını açmak için portal asasını portalda kullanın."]
+info = ["&8[&6Wormholes&8] &7&lSolucan deliği nasıl yapılır&r", "&81. &7Sunucudan veya bir yöneticiden portal asası ve portal rünleri alın.", "&82. &7Rünleri aynı düz yüzeyde bağlantılı herhangi bir şekle yerleştirin.", "&7   Dikdörtgen, çizgi (3x1), tek blok, L şekli ve haç gibi tüm bağlantılı şekiller çalışır.", "&7   Rünler eksenlere hizalı tek bir duvar, zemin veya tavanda düz durmalıdır.", "&83. &7Portal asasını tutup &fherhangi bir rün bloğuna sol tıklayarak&7 portalı oluşturun.", "&84. &7Başka bir yerde ikinci bir portal oluşturun (mesafe ve dünya fark etmez).", "&85. &7Ana menüyü açmak için açık portala asayla tıklayın.", "&7   &fHedef&7 seçeneğini açıp diğer portalı seçin. Öteki tarafta da tekrarlayın.", "&7   Yön ve erişim ayarları ayrı, basit menülerde gruplanmıştır.", "&86. &7Portallardan birinin {range} blok yakınında durun; hedef dünya çerçevede görünür ve içeri yürüdüğünüzde ışınlanırsınız.", "&7Yöneticiler &f/wormholes wand komutuyla malzeme oluşturabilir"]
+
+[command.debug]
+enabled = "Hata ayıklama günlükleri etkinleştirildi."
+disabled = "Hata ayıklama günlükleri devre dışı bırakıldı."
+
+[command.help]
+version = "Yüklü eklenti sürümünü göster"
+debug = "Wormholes tanı araçları"
+debug_dump = "Tanılama raporu oluştur ve isteğe bağlı olarak yükle"
+debug_dump_upload = "Raporu mclo.gs üzerine yükle"
+language = "Kendi dilinizi veya sunucunun varsayılan dilini seçin"
+root = "Wormholes komut kökü"
+wand = "Portal asasi ve bir solucan deligi runu al"
+"wand.rune" = "Solucan deligi runu da ver (rune=false yalnizca asayi verir)"
+door = "Hayatta kalma modunda kullanılabilen bir boyut kapısı öğesi ver"
+"door.type" = "pair | personal | public | pair_trapdoor | personal_trapdoor | public_trapdoor"
+debug_toggle = "Ayrıntılı konsol günlüklerini ve saniyelik telemetriyi açıp kapat"
+stats = "Canlı istatistik anlık görüntüsünün dosya yolunu göster; now=true ile yenilemeyi zorla"
+"stats.now" = "Anlık görüntüyü eşzamanlı olarak yeniden oluştur"
+info = "Portal yapım talimatlarını göster"
+admin = "Yıkıcı Wormholes bakım komutları"
+"admin.delete_portals" = "Tüm yerel portalleri ve kaydedilmiş portal bağlantılarını sil"
+"admin.delete_everything" = "Wormholes verilerini, yapılandırmasını, güvenini, kimliğini ve ağ durumunu sıfırla"
+"admin.freeze" = "Tüm portal projeksiyonlarını belirli bir saniye boyunca yerinde dondur (seconds=0 sürdürür)"
+"admin.freeze.seconds" = "Dondurulan karenin ne kadar tutulacağı (5-300, 0 hemen sürdürür)"
+"admin.flush" = "Her gözlemcinin yansıtılan bloklarını gerçek duruma döndür ve yeniden oluştur"
+network = "Sunucular arası solucan deliği ağı"
+"network.import" = "Başka bir sunucudan portal kodu aktarın (dahili bir rota kaydeder; bağlantıyı geçidin Bağlantı menüsünden kurun)"
+"network.import.code" = "Diğer sunucunun Dışa Aktar düğmesinden alınan portal kodu"
+"network.status" = "Eş sunucu bağlantı durumunu göster"
+"network.doctor" = "Ağ eşlerinin neden bağlantı kurmadığını açıklayın"
+server = "Sunucular arası seyahat: bağlı sunuculara bağlanın, listeleyin ve takas edin"
+"server.connect" = "Kendinizi bağlı bir sunucuya aktarın (kısayol: /wh server \\<name>)"
+"server.connect.name" = "Bağlı sunucu adı (bkz. /wh server list)"
+"server.export" = "Bu sunucuyu diğer sunucuların içe aktarabileceği bir kod olarak dışa aktarın"
+"server.import" = "Başka bir sunucunun dışa aktardığı bir sunucu veya portal kodunu içe aktarın"
+"server.import.code" = "Diğer sunucunun dışa aktarımından alınan kod"
+"server.list" = "Bağlı sunucuları ve bağlantı durumlarını listeleyin"
+"server.remove" = "Bağlı bir sunucuyu unutun (rotasını ve güvenilen anahtarını siler)"
+"server.remove.name" = "Unutulacak bağlı sunucunun adı"
+pocket = "Cep boyutlarini incele ve yeniden sekillendir"
+"pocket.info" = "Icinde durdugun cebin boyutunu, malzemelerini ve sinirlarini goster"
+"pocket.resize" = "Icinde durdugun cebi yeni bir boyut veya malzemeyle yeniden insa et"
+"pocket.resize.size" = "Yeni oda kenari (blok) veya mevcut boyutu korumak icin 0"
+"pocket.resize.material" = "Duvar, zemin ve tavan icin yeni blok veya keep"
+"pocket.resize.door" = "Cikis kapisi icin yeni blok veya keep"
+"pocket.resize.confirm" = "Degisiklik bir seyi yok edecek veya tasiyacaksa gereklidir"
+"pocket.resizeall" = "Mevcut her cebi yeni bir boyut veya malzemeyle yeniden insa et"
+
+[command.error]
+no_permission = "&8[&6Wormholes&8] &cİzininiz yok."
+no_permission_use = "&8[&6Wormholes&8] &cBu komutu kullanma izniniz yok."
+only_players = "&8[&6Wormholes&8] &cSadece oyuncular eşyalar alabilir."
+
+[command.wand]
+granted_wand = "&8[&6Wormholes&8] &aPortal asasi verildi."
+granted_starter = ["&8[&6Wormholes&8] &aPortal asası ve 1 solucan deliği rünü verildi.", "&8[&6Wormholes&8] &7İki solucan deliği rünü şekli oluşturun (tek düz yüzeyde bağlantılı herhangi bir şekil), bunları bağlayın ve projeksiyonu görmek için {range} blok içinde durun.", "&8[&6Wormholes&8] &7Tüm adımları görmek için &f/wormholes info&7 komutunu çalıştırın."]
+
+[command.door]
+unavailable = "&8[&6Wormholes&8] &cBoyut kapıları kullanılamıyor."
+unknown_type = "&8[&6Wormholes&8] &cBilinmeyen kapı türü. pair, personal veya public, pair_trapdoor, personal_trapdoor, public_trapdoor değerini kullanın."
+empty_type = "Kapı tipi boş olamaz"
+granted = "&8[&6Wormholes&8] &a&f{type}&a türünde bir boyut kapısı öğesi verildi."
+
+[command.stats]
+unavailable = "&8[&6Wormholes&8] &cİstatistik anlık görüntü yazıcısı kullanılamıyor."
+refreshed = "&8[&6Wormholes&8] &aAnlık görüntü yenilendi."
+path = ["&8[&6Wormholes&8] &7Anlık görüntü dosyası: &f{path}", "&8[&6Wormholes&8] &8Canlı ağ ve görünüm durumunu izlemek için bu dosyayı takip edin. Dosya her döngüde yerinde yeniden yazılır."]
+
+[command.admin]
+delete_failed = "&8[&6Wormholes&8] &cTüm portallar silinemedi. Tam yığın izini konsoldan inceleyin."
+delete_schedule_failed = "&8[&6Wormholes&8] &cPortal sıfırlama işlemi planlanamadı."
+reset_failed = "&8[&6Wormholes&8] &cWormholes sıfırlanamadı. Tam yığın izini konsoldan inceleyin."
+reset_schedule_failed = "&8[&6Wormholes&8] &cWormholes sıfırlama işlemi planlanamadı."
+projection_frozen = "&8[&6Wormholes&8] &aTüm portal projeksiyonları &f{seconds}&a saniye boyunca donduruldu. Otomatik olarak devam edecekler."
+projection_resumed = "&8[&6Wormholes&8] &aPortal projeksiyonları sürdürüldü."
+projection_failed = "&8[&6Wormholes&8] &cPortal projeksiyonları güncellenemedi. Tam yığın izi için konsolu kontrol edin."
+projection_schedule_failed = "&8[&6Wormholes&8] &cProjeksiyon güncellemesi zamanlanamadı."
+
+[command.admin.deleted_portals]
+one = "&8[&6Wormholes&8] &a&f{count}&a portal silindi ve yerel portal bağlantıları temizlendi."
+other = "&8[&6Wormholes&8] &a&f{count}&a portal silindi ve yerel portal bağlantıları temizlendi."
+
+[command.admin.reset_everything]
+one = "&8[&6Wormholes&8] &aWormholes varsayılan durumuna sıfırlandı. &f{count}&a portal silindi, ağ bağlantıları kapatıldı ve varsayılan yapılandırma dosyaları yeniden oluşturuldu."
+other = "&8[&6Wormholes&8] &aWormholes varsayılan durumuna sıfırlandı. &f{count}&a portal silindi, ağ bağlantıları kapatıldı ve varsayılan yapılandırma dosyaları yeniden oluşturuldu."
+
+[command.admin.projection_flushed]
+one = "&8[&6Wormholes&8] &a&f{count}&a projeksiyon gözlemcisi boşaltıldı; istemciler gerçek durumdan yeniden oluşturuyor."
+other = "&8[&6Wormholes&8] &a&f{count}&a projeksiyon gözlemcisi boşaltıldı; istemciler gerçek durumdan yeniden oluşturuyor."
+
+[command.pocket]
+not_inside = "&8[&6Wormholes&8] &cBunu calistirmak icin bir cep boyutunun icinde dur."
+invalid_size = "&8[&6Wormholes&8] &cCep boyutu {minimum} ile {maximum} blok arasinda olmali."
+invalid_shell_material = "&8[&6Wormholes&8] &c{material} cep duvari olamaz. Dusmeyen kati bir blok kullan."
+invalid_door_material = "&8[&6Wormholes&8] &c{material} cep cikis kapisi olamaz. Elle acilan bir kapi kullan; demir kapilar reddedilir."
+unchanged = "&8[&6Wormholes&8] &eO cep zaten bu boyutta ve bu malzemelerde."
+containers_not_empty = "&8[&6Wormholes&8] &cCep boyutlandirma durduruldu: &f{containers}&c dolu saklama blogu yok edilecekti. Yeniden denemeden once bosalt; &fconfirm=true&c bu guvenlik kontrolunu atlayamaz."
+resized = "&8[&6Wormholes&8] &aCep &f{size}&a blok olarak yeniden insa edildi (onceki &f{previous}&a), duvarlar &f{material}&a, cikis kapisi &f{door}."
+failed = "&8[&6Wormholes&8] &cCep yeniden insa edilemedi. Konsolu kontrol et."
+world_unavailable = "&8[&6Wormholes&8] &cCep boyutu yuklu degil."
+does_not_fit = "&8[&6Wormholes&8] &c{size} bloklu bir oda cep boyutunun insa yuksekligine sigmiyor."
+bulk_started = "&8[&6Wormholes&8] &7&f{count}&7 cep yeniden insa ediliyor."
+bulk_finished = "&8[&6Wormholes&8] &aYeniden insa edilen &f{resized}&a, atlanan &f{skipped}&a, basarisiz &f{failed}."
+info = ["&8[&6Wormholes&8] &7Cep &f{space}", "&8[&6Wormholes&8] &7Boyut &f{size}&7 blok, duvarlar &f{material}&7, cikis kapisi &f{door}", "&8[&6Wormholes&8] &7Sinirlar &f{minimum}&7 ile &f{maximum}"]
+confirm_required = ["&8[&6Wormholes&8] &c{size} blok olarak yeniden insa etmek &f{blocks}&c yerlestirilmis blogu yok eder ve &f{entities}&c varligi tasir.", "&8[&6Wormholes&8] &7Yeni duvarlarin disindaki bloklar yok edilir; tasinan varliklar girise goturulur.", "&8[&6Wormholes&8] &7Devam etmek icin ayni komutu &fconfirm=true&7 ile calistir."]
+
+[portal]
+deleted = "&c{portal} silindi"
+
+[portal.travel]
+cost_insufficient = "&cBu portalı kullanmak için {quantity}x {item} gerekiyor."
+cost_vault_insufficient = "&cBu portalı kullanmak için {amount} gerekiyor."
+cost_vault_unavailable = "&cBu portalın ekonomi maliyeti şu anda kullanılamıyor."
+cost_transaction_failed = "&cPortal, seyahat maliyetinizi işleyemedi."
+transfer_holding = "&6Hedef sunucuya bağlanılıyor..."
+transfer_interrupted = "&cPortal aktarımı kesildi: portaldan uzaklaştın."
+transfer_source_unavailable = "&cPortal aktarımı kesildi: kaynak portal artık kullanılamıyor."
+cooldown = "&6Portal bekleme süresinde"
+access_denied = "&cBu portala erişiminiz reddedildi"
+destination_unavailable = "&cPortal hedefi kullanılamıyor"
+arrival_denied = "&cHedef portal varışını reddetti."
+arrival_returned = "&cHedef portal varışını reddetti; seni {server} sunucusuna geri gönderiyoruz"
+arrival_failed = "&cPortal varış noktası yerleştirilemedi; hedef doğma noktasında kalıyorsunuz"
+transfer_cooldown = "&6Sunucular arası portal bekleme süresi: {seconds}s"
+destination_unreachable = "&cHedef sunucusu erişilemez"
+destination_unreachable_detail = "&cHedef sunucusu erişilemez: {reason}"
+transfer_blocked = "&cPortal aktarımı engellendi: {reason}"
+transfer_blocked_retry = "&cPortal aktarımı engellendi: {reason} ({seconds}s sonra yeniden denenecek)"
+
+[portal.prompt]
+cost_item = "&bMaliyet olarak istenen tam eşyayı ana elinizde tutun, ardından bırakma tuşuna basın. Eşya envanterinizden çıkmaz."
+cost_vault = "&bGeçiş başına tutarı gir (veya '{cancel}'):"
+invite = "&bPortal davetini sohbette yapıştırın (veya '{cancel}'):"
+block_state = "&bBu portalın ağ görünümünün kenarı için bir blok durumu girin veya '{cancel}':"
+name = "&bYeni portal adını sohbette girin (veya '{cancel}'):"
+direction = ["&8[&6Wormholes&8] &7Bir yönde bakıp sol tıklayarak uygulayın.", "&8[&6Wormholes&8] &7İptal etmek için Shift + sol tıklama."]
+
+[portal.notice]
+cost_item_set = "Seyahat artık {item} gerektiriyor."
+cost_item_invalid = "Bu eşya seyahat maliyeti olarak kaydedilemedi."
+cost_cleared = "Seyahat maliyeti temizlendi."
+cost_quantity_changed = "Seyahat maliyeti adedi: {quantity}"
+cost_vault_changed = "Seyahat ücreti: {amount}"
+cost_vault_invalid = "{maximum} değerini aşmayan pozitif bir para miktarı girin."
+cost_vault_unavailable = "Bu ücreti seçmeden önce bir ekonomi sağlayıcısı kullanılabilir olmalıdır."
+dimensional_link_managed = "Bu boyutsal portal, oluşturulan bağlantısını korur."
+not_rtp = "Bu portal artık rastgele ışınlanma modunda değil."
+region_unavailable = "Portal bölgesi kullanılamıyor; tekrar deneyin."
+travel_managed = "Boyutsal portallarda seyahat otomatik olarak yönetilir."
+travel_mirror_locked = "Ayna modunda seyahate izin verilmez."
+travel_changed = "Seyahat: {mode}"
+stream_quality_changed = "Akış Kalitesi: {quality}"
+network_value_changed = "{label} {value}"
+fallback_set = "Yedek blok ayarlandı: {block}"
+fallback_reset = "Yedek blok sıfırlandı: {block}"
+managed_mode = "Yönetilen boyutsal portallar portal modunda kalır."
+projection_receiver_inactive = "The End varışının görüntüsü devre dışı kalır."
+projection_changed = "Projeksiyon: {mode}"
+settings_sync_changed = "Ayar Eşitleme: {state}"
+access_changed = "Erişim: {mode}"
+mirror_select_first = "Görüntüyü döndürmeden önce Ayna modunu seçin."
+mirror_rotation_changed = "Ayna dönüşü: {degrees} derece"
+rtp_cannot_link = "Rastgele ışınlanma portalları hedeflere bağlanmaz."
+
+[portal.label]
+activation_global = "Genel ({range})"
+public_look_label = "Bakıldığında Görünen Genel Etiket"
+
+[portal.label.cost]
+free = "Ücretsiz"
+vanilla = "Vanilya Eşyası"
+vault = "Ekonomi"
+
+[portal.label.ambient]
+red = "Kırmızı"
+green = "Yeşil"
+blue = "Mavi"
+
+[portal.label.ambient_style]
+sparks = "Kıvılcımlar"
+outline = "Dış Hat"
+corners = "Köşeler"
+off = "Kapalı"
+
+[portal.label.skin]
+none = "Yok"
+
+[portal.label.travel]
+both = "Çift yönlü"
+outbound = "Yalnızca gidiş"
+inbound = "Yalnızca geliş"
+locked = "Kilitli"
+arrival = "Yalnızca varış"
+departure = "Yalnızca çıkış"
+dimensional_both = "Bağlantılı iki taraf da etkin kalır."
+dimensional_return_disabled = "Geri dönüş yolu devre dışı kalır."
+
+[portal.label.quality]
+standard = "Standart"
+performance = "Performans"
+balanced = "Dengeli"
+cinematic = "Sinematik"
+custom = "Özel"
+
+[portal.label.mode]
+portal = "Portal"
+wormhole = "Solucan deliği"
+gateway = "Geçit"
+rtp = "RTP"
+mirror = "Ayna"
+
+[portal.label.direction]
+up = "Yukarı"
+down = "Aşağıya"
+north = "Kuzey"
+south = "Güney"
+east = "Doğu"
+west = "Batı"
+
+[portal.label.allocation]
+shared = "Paylaşılan"
+per_player = "Oyuncu başına"
+
+[portal.label.permission]
+whitelist = "İzin listesi"
+blacklist = "Engelleme listesi"
+
+[portal.label.network]
+direct = "Doğrudan"
+sideband = "Yan kanal"
+reconnecting = "Yeniden bağlanıyor"
+
+[portal.network.label]
+render_mode = "Görüntüleme modu"
+ambient_style = "Ortam Parçacıkları"
+ambient_color = "Ortam Rengi"
+surface_skin = "Yüzey Görünümü"
+capture_radius = "Yakalama Radyüsü"
+full_refresh = "Tam Yenileme"
+entity_update = "Varlık Güncellemesi"
+view_grace = "Görünüm bekleme süresi"
+blackout = "Karartma Arka Planı"
+blackout_color = "Karartma Rengi"
+activation_range = "Etkinleşme Menzili"
+
+[portal.network.description]
+capture_radius = "Hedef portalın çevresinde aktarılan blokların yarıçapı."
+full_refresh = "Tam blok yenilemeleri arasındaki tik sayısı."
+entity_update = "Varlık güncellemeleri arasındaki tik sayısı."
+view_grace = "Bakış çevrildikten sonra akışın etkin tutulduğu saniye sayısı."
+
+[portal.form]
+rtp_unsupported = "&cRastgele ışınlanma portalları rünlerle oluşturulamaz."
+forming = "&bPortal oluşturuluyor... {type} rünleri aynı düz duvar, zemin veya tavanda birbirine bağlı olmalıdır."
+must_be_flat = "&cPortal tek bir duvar, zemin veya tavan üzerinde düz olmalıdır."
+interrupted = "&cPortal oluşumu kesildi; ayrılan rünler iade edildi."
+rune_placed = "&bRün yerleştirildi. Aynı düz yüzeyde bağlantılı bir şekil oluşturun, ardından portal asasıyla herhangi bir rüne sol tıklayın."
+opened = "&aPortal açıldı. Asayı tutup portala tıklayarak yapılandırın."
+
+[portal.edit]
+denied = "&cBu portalı yalnızca sahibi veya bir yönetici düzenleyebilir."
+
+[portal.menu]
+destination = ["&6&lHedef&r", "&7Bağlanacak portalı seçin.", "&7Mevcut bağlantı: {destination}", "", "&8Hedef seçiciyi açmak için tıklayın."]
+"destination.sort_smart" = "Akıllı"
+"destination.sort_name" = "Ad"
+"destination.sort_world" = "Dünya"
+"destination.sort_distance" = "Mesafe"
+"destination.local" = ["&6{portal}", "&7{world} içinde {x}, {y}, {z}; yön {direction}"]
+"destination.remote" = ["&6{portal}", "&7Sunucu: &f{server}", "&7{world} içinde {x}, {y}, {z}; yön {direction}", "&b{state}"]
+"destination.sort" = ["&e&lSıralama: &f&l{mode}&r", "&7Hedef sıralamasını değiştirin.", "&eSol tıklayın"]
+"destination.previous_page" = ["&e&lÖnceki Sayfa&r", "&7Önceki hedefleri göster.", "&eSol tıklayın"]
+"destination.next_page" = ["&e&lSonraki Sayfa&r", "&7Sonraki hedefleri göster.", "&eSol tıklayın"]
+"destination.page" = ["&b&lSayfa {page}/{pages}&r", "&7{count} hedef"]
+"destination.empty" = ["&7Bağlanabilecek hedef yok."]
+render_mode = ["&b&lGörüntüleme modu &f&l{mode}&r", "&7Bu portalın hedef hacminin ne kadarını yansıttığı.", "", "&7Mod: &f{mode}", "", "&8PanOptic tüm hedef hacmi görüntüler.", "&8Venticular görünür opak yüzeylerin arkasındaki geometriyi gizler.", "", "&8Sol: modu değiştir."]
+ambient_particles = ["&b&lOrtam Parçacıkları&r", "&7Bu portalın etrafında süzülen dekoratif toz.", "", "&7Stil: &f{style} &8({color})", "", "&8Sol: stili değiştir.", "&8Sağ: bir renk seç."]
+aperture_shape = ["&b&lAçıklık Şekli&r", "&7Çerçevenin içindeki açıklığın dış hatları.", "", "&7Şekil: &f{shape}", "&7Açık hücreler: &f{cells}", "", "&8Sol: sonraki şekil.", "&8Sağ: 45 derece döndür.", "&8Shift + sağ: full olarak sıfırla."]
+"aperture_shape.label" = "Açıklık Şekli"
+"aperture_shape.too_small" = "&c{shape} bu çerçevede hiç açık hücre bırakmıyor."
+"aperture_shape.invalid" = "&8[&6Wormholes&8] &cŞekil okunamadı: {reason}"
+"aperture_shape.current" = "&8[&6Wormholes&8] &f{portal}&7 açıklık şekli: &f{shape}&7 ({cells} açık hücre)"
+"aperture_shape.set" = "&8[&6Wormholes&8] &f{portal}&a açıklık şekli &f{shape}&a olarak ayarlandı ({cells} açık hücre)."
+surface_skin = ["&b&lYüzey Görünümü&r", "&7Portal açıklığını işlenmiş bir blok veya sıvı paneliyle kapatın.", "", "&7Görünüm: &f{skin}", "", "&8Sol: görünümü kaldır.", "&8Sağ: görünüm seçeneklerini aç."]
+"surface_skin.placard" = ["&6&lYüzey Görünümü&r", "&7Bir görünüm uygulamak için portala blok veya kova ile sağ tıklayın.", "", "&7Görünüm: &f{skin}"]
+"surface_skin.glass" = ["&b&lCam Görünümü&r", "&7Açıklığın üzerinde şeffaf bir cam pencere.", "", "&8Cam uygulamak için tıklayın."]
+"surface_skin.clear" = ["&c&lGörünümü Kaldır&r", "&7Görünümü kaldırır ve projeksiyonları geri yükler.", "", "&8Görünümü kaldırmak için tıklayın."]
+gateway_destination = ["&6&lEşleştirme & Hedef&r", "&7Başka bir sunucuyla eşleştirin veya bir geçit seçin.", "&7Mevcut bağlantı: {destination}", "", "&8Eşleştirme merkezini açmak için tıklayın."]
+rtp_destination = ["&6&lRastgele Hedef&r", "&7Portalın hedefi nerede ve ne zaman yeniden seçeceğini ayarlayın.", "&7Yenileme: &b{rotation}", "", "&8Rastgele ışınlanma ayarlarını açmak için tıklayın."]
+rename = ["&a&lPortalı Yeniden Adlandır&r", "&7Bağlantılarda ve menülerde gösterilen adı değiştirin.", "&7Mevcut: &f{portal}", "", "&8Yeni bir ad yazmak için tıklayın."]
+delete = ["&c&lPortalı Sil&r", "&7Bu portalı kalıcı olarak siler.", "", "&c&nOnaylamak için Shift + sol tıklama&r"]
+advanced_settings = ["&3&lGelişmiş Akış Ayarı&r", "&7Tanılama ve sıra dışı bağlantılar için doğrudan ayarlar.", "&7Bir değeri değiştirmek Akış Kalitesini Özel olarak işaretler."]
+back_settings = ["&e&lAyarlara Geri Dönün&r", "&7Portal ayarlarına geri dönün."]
+extensions = ["&b&lDiğer ayarlar&r", "&7Kurallar, erişim, ağlar ve diğer özellik ayarları.", "&eSol tık"]
+stream_quality = ["&b&lAkış Kalitesi: {quality}&r", "&7Uzak görünüm menzili ve güncelleme sıklığı için tek ayar.", "", "&7Derinlik &b{depth}&7  Varlıklar &b{entities}t", "&7Yenileme &b{refresh}t&7  Bekleme &b{grace}s", "", "&8Tıklama: kaliteyi değiştirir.", "&8Shift + tıklama: gelişmiş ayar."]
+orientation = ["&9&lYön&r", "&7Ön yüz: &9{facing}", "&7Ekranın üstü: &6{up}", "", "&8Ön yüz, çevirme ve dönüş için tıklayın."]
+orientation_placard = ["&9&lPortal Yönü&r", "&7Ön yüz: &9{facing}", "&7Ekranın üstü: &6{up}"]
+network_number = ["&b&l{label} &f&l{value}&r", "&7{description}", "", "&7Mevcut: &b{value}", "", "&8Sol tıklama: +{step}", "&8Sağ tıklama: -{step}", "&8Shift + sol tıklama: +{large_step}", "&8Shift + sağ tıklama: -{large_step}"]
+fallback_block = ["&b&lYedek Blok&r", "&7Akış derinliğinin ötesinde gösterilen blok.", "", "&7Mevcut: &f{block}", "", "&8Sol tıklama: blok durumu girin.", "&8Sağ tıklama: havaya sıfırlayın."]
+blackout = ["&b&lKarartma Arka Planı&r", "&7Yansıtmanın uzak ve yan sınırlarını som betonla kapatarak yerel dünyanın asla görünmemesini sağlar.", "", "&7Mevcut: &f{state} &8({color})", "", "&8Sol tıklama: aç/kapat.", "&8Sağ tıklama: renk seçin."]
+activation_range = ["&b&lEtkinleşme Menzili &f&l{value}&r", "&7Bu portalın yakındaki oyuncular için yansıtmaya başladığı blok cinsinden mesafe.", "", "&7Mevcut: &b{value}", "", "&8Sol tıklama: +{step}", "&8Sağ tıklama: -{step}", "&8Shift + sol tıklama: +{large_step}", "&8Shift + sağ tıklama: -{large_step}", "&88'in altı Genel'e sıfırlanır."]
+settings_placard_gateway = ["&b&lPortal Ayarları&r", "&7Erişim ve aktarım denetimi.", "&7Ayrıca sunucular arası görünüm ayarı.", "", "&7Daha büyük derinlik / daha kısa tik aralıkları =", "&7daha ayrıntılı görünüm, daha fazla bant genişliği."]
+mode_placard = ["&e&lPortal Modu&r", "&7Mevcut: &e{mode}", "", "&7Portal: temel bağlantılı portal.", "&7Solucan deliği: görünüm alanına sahip portal.", "&7Geçit: sunucular arası geçit.", "&7RTP: yapılandırılabilir rastgele hedefler.", "&7Ayna: bu tarafı yansıtır, seyahat yoktur."]
+mode_opener = ["&e&lModu&r", "&7{description}", "", "&7Şu anda: &e{mode}", "", "&8Modu değiştirmek için tıklayın."]
+direction = ["&9&lYön&r", "&7Portalın ön yüz yönünü değiştirir.", "", "&7Mevcut yön: &9{direction}", "", "&8Tıklayın, bir yöne bakın ve uygulamak için sol tıklayın."]
+flip_face = ["&b&lÖn Yüzü Çevir&r", "&7Portalın ön yüz yönünü tersine çevirir.", "&7Ekran dönüşü hizalı kalır.", "", "&7Ekranın mevcut üst yönü: &b{up}", "", "&8Çevirmek için tıklayın."]
+rotate_counterclockwise = ["&6&lSaat Yönünün Tersine Döndür&r", "&7Portal görünüm alanını 90 derece döndürür,", "&7ön yüzü değiştirmez.", "", "&7Ekranın mevcut üst yönü: &6{up}", "", "&8Döndürmek için tıklayın."]
+rotate_clockwise = ["&6&lSaat Yönünde Döndür&r", "&7Portal görünüm alanını 90 derece döndürür,", "&7ön yüzü değiştirmez.", "", "&7Ekranın mevcut üst yönü: &6{up}", "", "&8Döndürmek için tıklayın."]
+back = ["&e&lGeri dön&r", "&7Portal menüsüne geri dönün."]
+settings_gateway = ["&b&lAyarlar&r", "&7İzinler, aktarımlar ve", "&7sunucular arası görünüm ayarı.", "", "&7Erişim: &6{access}", "&7Gönder &b{send}&7  Al &b{receive}", "&7Derinlik &b{depth}&7  Varlık &b{entity}t", "", "&8Ayarları açmak için tıklayın."]
+settings_sync = ["&b&lAyar Eşitleme {state}&r", "&7Açıldığında bu portalın ayarları", "&7(derinlik, tikler, projeksiyon, izinler,", "&7aktarımlar) bağlı tüm eşlerle eşitlenir.", "", "&7Mevcut: &b{state}", "", "&8Değiştirmek için tıklayın."]
+permission = ["&6&lErişim {mode}&r", "&7{description}", "&7İzin düğümü: &f{node}", "", "&7Mevcut: &6{mode}", "", "&8İzin listesi / engelleme listesi arasında geçiş yapmak için tıklayın.", "&8Yöneticiler her zaman etkilenmez."]
+public_look_label = ["&b&lHerkese açık bakış etiketi: &f&l{state}&r", "&7Yakındaki oyuncular portala baktığında portalın adını göster.", "&7Kapalıyken rota etiketi yalnızca portal aracıyla görünür.", "", "&eDeğiştirmek için sol tıklayın"]
+
+[portal.menu.gateway]
+server = "&7Sunucu: &f{server}"
+link = "&7Bağlantı: &b{state}"
+choose = ["&6&lHedef Seç&r", "&7Bulunan yerel ve uzak geçitlerden birini seçin.", "", "&8Hedef listesini açmak için tıklayın."]
+unpaired = ["&6&lGeçit Eşleştirmesi&r", "&7Durum: &cEşleştirilmemiş"]
+paired = ["&6&lGeçit Eşleştirmesi&r", "&7Hedef: &6{destination}"]
+export = ["&6&lDavet Oluştur&r", "&7Başka bir sunucu için imzalı geçit kodu oluşturun.", "", "&8Yeni kodu kopyalamak için tıklayın."]
+import = ["&b&lDavet Kullan&r", "&7Başka bir geçitten gelen imzalı kodu yapıştırın.", "", "&8Tıklayın, ardından kodu sohbete yapıştırın."]
+
+[portal.menu.mirror]
+rotation = "&7Görüntü dönüşü: &b{degrees} derece"
+rotate_clockwise = "&8Sağ tıklama: saat yönünde döndür."
+rotate_counterclockwise = "&8Shift + sağ tıklama: saat yönünün tersine döndür."
+selected = ["&e&lAyna&r", "&7Yerel dünyayı geri yansıtır.", "&7Çerçeveden baktığınızda kendinizi görürsünüz.", "&7Ayna modunda seyahat yoktur.", "", "&aSeçili"]
+available = ["&e&lAyna&r", "&7Yerel dünyayı geri yansıtır.", "&7Çerçeveden baktığınızda kendinizi görürsünüz.", "&7Ayna modunda seyahat yoktur.", "", "&7Seçmek için sol tıklayın"]
+flip = ["&7Duvar aynaları 180 derecelik adımlarla döner", "&7Böylece yansıtılan varlıklar birbiriyle uyumlu kalır.", "&8Sağ tıklayın: yansıtılan görüntüyü çevirin."]
+
+[portal.menu.cost]
+opener = ["&6&lSeyahat Maliyeti&r", "&7Bir oyuncu bu portalı kullandığında", "&7tam bir eşya veya parası isteyin.", "", "&7Mod: &f{mode}", "&7Maliyet: &f{cost}", "", "&8Yapılandırmak için tıklayın."]
+placard = ["&6&lSeyahat Maliyeti&r", "&7Bu portal seyahate izin vermeden önce", "&7oyuncular ödeme yapmalıdır.", "", "&7Mod: &f{mode}", "&7Maliyet: &f{cost}"]
+mode_free = ["&a&lÜcretsiz&r", "&7Ödeme gerekmez.", "", "&8Seyahati ücretsiz yapmak için tıklayın."]
+mode_vanilla = ["&b&lVanilya Eşyası&r", "&7Tam eşleşen bir eşyayı tüketir.", "", "&8Tıklayın, eşyayı tutun, ardından bırakma tuşuna basın."]
+mode_vault = ["&a&lEkonomi&r", "&7Ekonomi sağlayıcısı üzerinden para çeker.", "", "&8Bir miktar girmek için tıklayın."]
+mode_vault_unavailable = ["&c&lEkonomi kullanılamıyor&r", "&7Bir ekonomi sağlayıcısı gereklidir.", "", "&8Bu mod için bir ekonomi sağlayıcısını etkinleştir."]
+free_detail = ["&a&lMaliyet Yok&r", "&7Bu portaldan seyahat ücretsizdir."]
+secondary_empty = ["&8&lEk Ayar Yok&r"]
+item = ["&b&l{item}&r", "&7Seyahat için tam olarak bu eşya gereklidir.", "&7Seçim eşyası asla tüketilmez.", "", "&8Sol tıklama: elde tutulan başka bir eşyayı seçin.", "&8Sağ tıklama: maliyeti temizleyin."]
+quantity = ["&b&lAdet {quantity}&r", "&7Her geçişte kaç tam eşleşen", "&7eşyanın tüketileceğini belirler.", "", "&8Sol tıklama: +1", "&8Sağ tıklama: -1", "&8Shift + sol tıklama: +8", "&8Shift + sağ tıklama: -8", "&8En fazla: {maximum}"]
+vault_amount = ["&a&l{amount}&r", "&7Her geçişte çekilen para.", "", "&8Sol tıklama: başka bir miktar girin.", "&8Sağ tıklama: maliyeti temizleyin."]
+
+[portal.menu.ambient_color]
+placard = ["&6&lOrtam Rengi&r", "&7Ortam toz parçacıklarının rengi.", "", "&7Mevcut: &f{color}"]
+channel = ["&b&l{label} &f&l{value}&r", "", "&8Sol tıklama: +{step}", "&8Sağ tıklama: -{step}", "&8Shift + sol tıklama: +{large_step}", "&8Shift + sağ tıklama: -{large_step}"]
+option = ["&b&l{color}&r", "", "&8Seçmek için tıklayın."]
+
+[portal.menu.travel]
+managed = ["&6&lSeyahat: {direction}&r", "&7Sistem tarafından yönetilen boyutsal portal yönü.", "&7{detail}"]
+mirror = ["&c&lSeyahat: Ayna Kilidi&r", "&7Ayna modu yalnızca görüntü içindir.", "&7Varlıklar bu portaldan girip çıkamaz."]
+standard = ["&b&lSeyahat: {mode}&r", "&7Bu portaldan geçiş yönünü denetler.", "", "&7Giden: &b{outgoing}&7  Gelen: &b{incoming}", "", "&8Seyahat yönünü değiştirmek için tıklayın."]
+
+[portal.menu.blackout_color]
+placard = ["&6&lKarartma Rengi&r", "&7Karartma kabuğunda kullanılan beton rengi.", "", "&7Mevcut: &f{color}"]
+option = ["&b&l{color}&r", "", "&8Seçmek için tıklayın."]
+
+[portal.menu.placard]
+rtp = ["&6&l{portal}&r", "&7Tür: &e{type}", "&7Yön: &9{facing}", "&7Dağıtım: &b{allocation}", "&7Döngü: &b{rotation}", "", "&8Yöneticiler izin ve engelleme listelerinden etkilenmez."]
+linked = ["&6&l{portal}&r", "&7Tür: &e{type}", "&7Yön: &9{facing}", "&7Bağlantı: &6{destination}", "", "&8Yöneticiler izin ve engelleme listelerinden etkilenmez."]
+unlinked = ["&6&l{portal}&r", "&7Tür: &e{type}", "&7Yön: &9{facing}", "&7Bağlantı: &c{none}", "", "&8Yöneticiler izin ve engelleme listelerinden etkilenmez."]
+
+[portal.menu.projection]
+on = ["&6&lProjeksiyon Açık&r", "&7Bu portalın canlı görünümünü gösterir.", "&7Hedef veya ayna görüntüsü görünür.", "", "&7Mevcut: &bProjeksiyon Açık&r", "", "&8Açmak / kapatmak için tıklayın."]
+off = ["&8&lProjeksiyon Kapalı&r", "&7Çerçeve boş kalır.", "&7Hedef görünümü veya ayna yoktur.", "", "&7Mevcut: &bProjeksiyon Kapalı&r", "", "&8Açmak / kapatmak için tıklayın."]
+
+[portal.menu.mode_option]
+selected = ["&e&l{mode}&r", "&7{description}", "", "&aŞu anda Seçili"]
+available = ["&e&l{mode}&r", "&7{description}", "", "&7Seçmek için tıklayın"]
+
+[portal.input]
+cancel = "iptal"
+
+[portal.rtp]
+editor_title = "RTP: {portal}"
+
+[portal.rtp.notice]
+setting_rejected = "Bu ayar uygulanamadı: {reason}"
+applied = "Rastgele hedef ayarları uygulandı."
+reset_defaults = "Rastgele ışınlanma ayarları varsayılanlara sıfırlandı."
+editor_refreshed = "Ayarlar değişti; editör yenilendi."
+runtime_unavailable = "Rastgele ışınlanma çalışma ortamı kullanılamıyor."
+reroll_failed = "Elle yeniden seçim başarısız oldu; sunucu günlüğüne bakın."
+reroll_preparing = "Yeni bir rastgele hedef hazırlanıyor."
+reroll_unavailable = "Rota hazırlanırken veya kullanılırken yeniden seçim yapılamaz."
+pool_rebuilding = "Özel hedef havuzu yeniden oluşturuluyor."
+pool_failed = "Hedef havuzu yeniden oluşturulamadı; sunucu günlüğünü inceleyin."
+not_ready = "&ePortal hedefini hâlâ dengeliyor."
+traversal_failed = "&cPortal dengelenemedi; tekrar deneyin."
+
+[portal.rtp.rotation]
+private = "Oyuncuya özel: her {duration}"
+
+[portal.mode]
+changed = "&a{portal} modu {mode} olarak ayarlandı."
+
+[portal.mode.description]
+portal = "Temel bağlantılı portal."
+wormhole = "Görünüm alanı projeksiyonuna sahip bağlanabilir portal."
+gateway = "Sunucular arası ağ bağlantıları için ayrılmıştır."
+rtp = "Yerel rastgele ışınlanma portalı."
+mirror = "Yerel dünyayı yansıtır ve seyahati engeller."
+
+[portal.permission.description]
+whitelist = "Oyuncuların bu portalı kullanmak için bu izin düğümüne ihtiyacı vardır."
+blacklist = "Bu izin düğümüne sahip oyuncular engellenir."
+
+[portal.direction]
+cancelled = "&8[&6Wormholes&8] &7İptal edildi"
+set = "&8[&6Wormholes&8] &7Yön ayarlandı"
+
+[portal.setting]
+notification = "&a{portal}: &r{message}"
+
+[portal.link]
+linked = "&a{portal}, {destination} hedefine bağlandı."
+linked_remote = "&a{portal}, {server} sunucusundaki {destination} hedefine bağlandı."
+unlinked = "&e{portal} ile {destination} bağlantısı kaldırıldı."
+
+[portal.orientation]
+face_flipped = "&a{portal} ön yüzü {direction} yönüne çevrildi."
+rotated_counterclockwise = "&a{portal} saat yönünün tersine döndürüldü."
+rotated_clockwise = "&a{portal} saat yönünde döndürüldü."
+direction_changed = "&a{portal} yönü {direction} olarak değiştirildi."
+
+[director.help]
+no_subcommands = "Bu sayfada alt komut yok."
+no_description = "Açıklama verilmedi"
+command_group = "Komut grubu. Açmak için tıklayın."
+category = "Komut kategorisi"
+no_parameters = "Parametre yok. Komutu önceden doldurmak için tıklayın."
+parameters_hover = "Daha fazla bilgi için imleci parametrelerin üzerine getirin."
+
+[director.help.navigation]
+back = "Geri dön"
+page = "Sayfa"
+
+[director.help.navigation.parent]
+hover = "Ana komut grubuna geri dönün"
+
+[director.help.navigation.previous]
+hover = "Önceki sayfa"
+
+[director.help.navigation.next]
+hover = "Sonraki sayfa"
+
+[director.help.parameter]
+required = "Bu parametre zorunludur."
+optional = "Bu parametre isteğe bağlıdır."
+default = "Belirtilmezse varsayılan değer \"{value}\" olur."
+type = "Bu parametrenin türü {type}."
+
+[director.runtime.error]
+invalid_origin = "Bu komut bu kaynaktan çalıştırılamaz."
+unknown_parameter = "Bilinmeyen parametre: {key}"
+unexpected_argument = "Beklenmeyen bağımsız değişken \"{argument}\". İsteğe bağlı parametreler seed=123 gibi adlarıyla belirtilmelidir"
+unclosed_group = "{key} parametresi için kapanış \"]\" karakteri eksik"
+conversion_failed = "\"{value}\" değeri, {parameter} için {type} türüne dönüştürülemedi"
+default_parse_failed = "{parameter} parametresinin varsayılan değeri çözümlenemedi"
+missing_argument = "Eksik bağımsız değişken \"{parameter}\" ({type})"
+execution_failed = "{command} komutu çalıştırılamadı: {reason}"
+
+[network]
+not_initialized = "&8[&6Wormholes&8] &cAğ henüz başlatılmadı."
+
+[network.status]
+disabled = "&8[&6Wormholes&8] &7Ağ &cdevre dışı&7 (wormholes.toml)."
+not_running = "&8[&6Wormholes&8] &cAğ etkin ancak çalışmıyor. Kimlik deposunu ve ağ bağlantı noktasını kontrol edin."
+listening = "&8[&6Wormholes&8] &7Mevcut sunucu: &f{server}&7, dinleme adresi: &f{address}"
+outbound_only = "&8[&6Wormholes&8] &7Mevcut sunucu: &f{server}&7, yalnızca giden Boat modu"
+public_key = "&8[&6Wormholes&8] &8Açık anahtar: {fingerprint}"
+no_routes = "&8[&6Wormholes&8] &7Henüz bağlı eş sunucu rotası yok."
+peer = "&8[&6Wormholes&8] &f{server}&7 {state} &7{address}{rtt}"
+last_attempt = "&8[&6Wormholes&8] &8  Son deneme: {error}"
+
+[network.doctor]
+clear = "&8[&6Wormholes&8] &aAğ ayarlama sorunları tespit edilmedi."
+header = "&8[&6Wormholes&8] &eAğ tanısı:"
+line = "&8[&6Wormholes&8] &7- {diagnostic}"
+
+[network.code]
+building = "&8Portal kodu oluşturuluyor..."
+copy = "&6&l[Portal kodunu kopyala: {portal}]&r"
+copy_hover = "&7Kopyalamak için tıklayın. Diğer sunucuya yapıştırın: portal menüsü > İçe Aktar veya /wh server import \\<code>"
+fingerprint = "&8Bu sunucunun adresini ve açık anahtar parmak izini içerir: {fingerprint}."
+too_long = "&eBu kod sohbete yapıştırmak için çok uzun. Diğer sunucuda /wh server import \\<code> kullanın."
+invalid = "&cGeçersiz portal kodu. Kod {prefix} ile başlar; sohbete yapıştırılırken kesilmiş olabilir. /wh server import \\<code> deneyin. Eski eklenti sürümlerindeki kodlar yeniden dışa aktarılmalıdır."
+same_server = "&cBu kod, bu sunucuya ait."
+same_identity = "&cBu kod mevcut sunucu kimliğine ({server}) çözümlendi. İki sunucuyu da kendi Wormholes kimlikleriyle yeniden başlatıp kodu diğer sunucudan yeniden dışa aktarın."
+linked = "&a&f{portal}&7 -> &f{destination}&a, &f{server}&a sunucusuna bağlandı. Sunucular bağlanınca portal açılır."
+route_saved = "&a{server} rotası {fingerprint} açık anahtarıyla kaydedildi. Bağlantı kurulduğunda '{portal}' geçidin bağlantı menüsünde görünecek."
+check_status = "&8Bağlantı durumu için /wh network status komutunu kullanın."
+using_address = "&7Bu portal kodu {address} adresini kullanır; ortak adres değişirse imzalı el sıkışma bunu otomatik algılayıp düzeltir."
+
+[server]
+unknown = "&8[&6Wormholes&8] &cBilinmeyen sunucu '&f{server}&c'. Önce kodunu içe aktarın veya /wh server list komutuna bakın."
+removed = "&8[&6Wormholes&8] &aSunucu &f{server}&a ve güvenilen anahtarı kaldırıldı."
+name_empty = "Sunucu adı boş olamaz"
+
+[server.code]
+copy = "&6&l[Sunucu kodunu kopyala: {server}]&r"
+copy_hover = "&7Kopyalamak için tıklayın. Diğer sunucuya yapıştırın: /wh server import \\<code>"
+raw = "&7Sunucu kodu: &f{code}"
+saved = "&aSunucu &f{server}&a {fingerprint} açık anahtarıyla kaydedildi. &f/wh server {server}&a ile bağlanın."
+
+[server.connect]
+sending = "&8[&6Wormholes&8] &aSizi &f{server}&a sunucusuna gönderiyoruz..."
+not_ready = "&8[&6Wormholes&8] &c{server} şu anda erişilebilir değil. /wh network status komutunu kontrol edin."
+failed = "&8[&6Wormholes&8] &cSizi {server} sunucusuna aktaramadık. Konsolu ve /wh network status komutunu kontrol edin."
+only_players = "&8[&6Wormholes&8] &cBaşka bir sunucuya yalnızca oyuncular bağlanabilir."
+
+[server.list]
+header = "&8[&6Wormholes&8] &7Bağlı sunucular:"
+empty = "&8[&6Wormholes&8] &7Henüz bağlı sunucu yok. &f/wh server import \\<code>&7 kullanın."
+entry = "&8[&6Wormholes&8] &f{server}&7 {state} &8{address}"
+
+[door.transit]
+shutdown = "Boyut kapıları geçiş tamamlanmadan kapatıldı."
+message = "&8[&6Wormholes&8] &7{message}"
+link_not_placed = "Bağlı Solucan deliği kapısı henüz yerleştirilmedi."
+link_unavailable = "Bağlı Solucan deliği kapısı kullanılamıyor veya engellenmiş."
+nested_pocket = "Bir cep kapısı, ortak boşluk boyutunun içinden başka bir cep boyutu açamaz."
+pocket_not_ready = "Cep boyutu henüz hazır değil."
+pocket_allocation_failed = "Cep boyutu oluşturulamadı."
+safe_return_not_found = "Kapının bu tarafında güvenli bir dönüş yolu bulunamadı."
+pocket_prepare_failed = "Cep boyutu güvenli biçimde hazırlanamadı."
+return_ticket_save_failed = "Güvenli dönüş yolu kaydedilemedi."
+pocket_entry_unsafe = "Cep boyutunun girişi güvenli değil."
+pocket_entry_chunk_failed = "Cep boyutu giriş chunk'ını yükleyemedi."
+no_return_route = "Bu cep boyutu için kaydedilmiş dönüş yolunuz yok."
+return_unavailable = "Dönüş kapınız ilgili tarafta kullanılamıyor veya engellenmiş."
+return_world_unloaded = "Dönüş dünyanız yüklü değil."
+return_point_obstructed = "Kaydedilen dönüş noktanız engellenmiş."
+return_chunk_failed = "Kaydedilmiş dönüş chunk'ı yüklenemedi."
+closed = "Boyut Kapısı geçiş tamamlanmadan kapandı."
+cycle_consumed = "Bu kapının açılma döngüsü zaten kullanıldı. Kapıyı kapatıp yeniden aç."
+source_missing = "Boyut kapısı artık orada değil."
+source_close_failed = "Kaynak kapı güvenli biçimde kapatılamadı."
+source_region_unavailable = "Kaynak kapının bölgesi kullanılamıyor."
+start_failed = "Boyutsal geçiş başlatılamadı."
+cancelled = "Boyutsal geçiş iptal edildi."
+
+[door.craft]
+one_at_a_time = "&8[&6Wormholes&8] &7Her birinin benzersiz kimlik alması için boyut kapılarını tek tek üretin."
+
+[door.pair]
+unpack_failed = "&8[&6Wormholes&8] &7Kapı çifti ayrılamadı; kit tüketilmedi."
+unpacked = "&8[&6Wormholes&8] &7Dolaşık çift, bağlantılı A ve B Solucan Deliği Kapılarına ayrıldı."
+missing = "&8[&6Wormholes&8] &7Bu eşli kapının kayıtlı diğer ucu yok."
+
+[door.legacy]
+combine = "&8[&6Wormholes&8] &7Bu eski Boyut Kapısını yerleştirmeden önce ahşap bir kapıyla birleştirin."
+
+[door.place]
+already_placed = "&8[&6Wormholes&8] &7Bu Boyut Kapısı zaten yerleştirilmiş veya durumu kaydedilememiş."
+
+[door.break]
+exit_anchored = "&8[&6Wormholes&8] &7Boyutsal çıkış bu cep boyutuna sabitlenmiş."
+support = "&8[&6Wormholes&8] &7Destek bloğunu kaldırmadan önce boyut kapısını kırın."
+
+[door.disable]
+warning = "&8[&6Wormholes&8] &7Boyut kapıları devre dışı bırakılıyor. Cep boyutunun dönüş kapısından hemen çıkın."
+
+[door.rescue]
+cancelled = "&8[&6Wormholes&8] &7Acil tahliye iptal edildi; dönüş yolu korundu."
+failed = "&8[&6Wormholes&8] &7{route} {fallback} Bir kalple korunmaya devam ediyorsunuz."
+
+[door.rescue.reason]
+no_route = "Cep boyutunda kaydedilmiş dönüş yolu yok."
+return_world_unavailable = "Kaydedilen geri dönüş dünyası mevcut değil."
+return_point_obstructed = "Kaydedilen geri dönüş noktası engellenmiştir."
+return_chunk_failed = "Kaydedilen geri dönüş parçası yüklenemedi."
+start_failed = "Acil tahliye başlatılamadı."
+
+[door.rescue.fallback]
+no_world = "Cep boyutu olmayan hiçbir yedek dünya yüklü değil."
+obstructed = "Yedek doğma noktası engellenmiş."
+chunk_failed = "Yedek doğma noktası yüklenemedi."
+schedule_failed = "Yedek tahliye planlanamadı."
+
+[door.access]
+unknown_player = "Bilinmeyen ({id})"
+edit_denied = "&cBu kapıyı yalnızca sahibi veya bir yönetici düzenleyebilir."
+unavailable = "&cBu boyut kapısının erişim kaydı yok."
+save_failed = "&cBu kapı erişim değişikliği kaydedilemedi."
+player_not_found = "&c{name} adlı oyuncu bulunamadı."
+owner_always = "&7Kapının sahibi her zaman erişebilir."
+already_listed = "&7{name} bu kapının listesinde zaten var."
+added = "&a{name} bu kapının listesine eklendi."
+removed = "&a{name} bu kapının listesinden çıkarıldı."
+state_changed = "&a{name} artık bu kapı için {state} durumunda."
+prompt_player = "&bBu kapının listesine eklenecek oyuncu adını yazın (veya '{cancel}'):"
+denied = "&cBu boyut kapısı sizi reddediyor."
+transit_denied = "Bu boyut kapısına erişiminiz yok."
+
+[door.access.label]
+neutral = "Tarafsız"
+whitelist = "İzin listesi"
+blacklist = "Engelleme listesi"
+
+[door.access.kind]
+pair = "Dolaşık"
+personal = "Kişisel"
+public = "Ortak"
+return = "Çıkış"
+
+[door.open_state]
+open = "Açık"
+closed = "Kapalı"
+
+[door.menu.access]
+title = "Kapı Erişimi: {kind}"
+placard = ["&6&l{kind} Boyut Kapısı&r", "&7Sahibi: &f{owner}", "&7İzin listesinde: &a{whitelisted}", "&7Engelleme listesinde: &c{blacklisted}", "&7Listedeki oyuncular: &b{count}", "&8Bu kapıyı sahibi ve yöneticiler düzenler."]
+add_player = ["&a&lOyuncu Ekle&r", "&7Listeye eklemek için sohbete bir oyuncu adı yazın.", "", "&8Oyuncu eklemek için tıklayın."]
+open_state = ["&b&lOpenState: &f&l{state}", "&7Portal bu bloğun fiziksel durumunu izler.", "&7Etkin durum: &f{state}&7.", "", "&8Sonraki: {next}. Değiştirmek için tıklayın."]
+entry = ["&f{name}", "&7Durum: &b{state}", "", "&8Sol tık: izin ver. Sağ tık: engelle.", "&8Orta tık veya Shift + sol tık: kaldır."]
+
+[wand.selection]
+corner_a = "&bA köşesi ayarlandı. Karşı köşeye sağ tıklayın."
+corner_b = "&bB köşesi ayarlandı. Karşı köşeye sol tıklayın."
+not_flat = "&cSeçim bir blok kalınlığında olmalıdır. Düzleştirmek için bir köşeye yeniden tıklayın."
+too_large = "&cSeçim çok büyük: {count} blok (en fazla {maximum})."
+opening = "&bPortal açılıyor..."
+open_failed = "&cBurada portal açılamadı."
+
+[wand.selection.selected]
+one = "&b{count} blok seçildi. Portalı açmak için bir cam panele sol tıklayın."
+other = "&b{count} blok seçildi. Portalı açmak için bir cam panele sol tıklayın."
+
+[label]
+none = "Yok"
+on = "Açık"
+off = "Kapalı"
+ready = "Hazır"
+preparing = "Hazırlanıyor"
+open = "Açık"
+closed = "Kapalı"
+
+[rtp.routing]
+action_confirm = "Ayrı bir onay ekranını açın."
+header = ["&b&lYenileme & Hedef Havuzu&r", "&7Modları doğrudan seçin, ardından tüm değişiklikleri bir kerede uygulayın."]
+shared_selected = ["&a&lOrtak Hedef&r", "&7Herkes aynı rotayı görür ve kullanır.", "&aSeçili"]
+shared_available = ["&b&lOrtak Hedef&r", "&7Herkes aynı rotayı görür ve kullanır.", "&eSeçmek için sol tıklayın"]
+private_selected = ["&a&lOyuncu Başına Hedef&r", "&7Her oyuncuya özel bir rezervasyon verilir.", "&aSeçili"]
+private_available = ["&b&lOyuncu Başına Hedef&r", "&7Her oyuncuya özel bir rezervasyon verilir.", "&eSeçmek için sol tıklayın"]
+static_selected = ["&a&lSabit&r", "&7Aynı hedefi koruyun.", "&aSeçili"]
+static_available = ["&b&lSabit&r", "&7Aynı hedefi koruyun.", "&eSeçmek için sol tıklayın"]
+timed_selected = ["&a&lZamanlı&r", "&7Ayarlanan süre geçince hedefi değiştirir.", "&aSeçili"]
+timed_available = ["&b&lZamanlı&r", "&7Ayarlanan süre geçince hedefi değiştirir.", "&eSeçmek için sol tıklayın"]
+trip_selected = ["&a&lHer Yolculuktan Sonra&r", "&7Kullanımdan sonra yeni bir hedef hazırlar.", "&aSeçili"]
+trip_available = ["&b&lHer Yolculuktan Sonra&r", "&7Kullanımdan sonra yeni bir hedef hazırlar.", "&eSeçmek için sol tıklayın"]
+manual_reroll = ["&e&lElle Yeniden Seç&r", "&7{description}", "&eSol tıklayın"]
+rebuild_pool = ["&e&lHedef Havuzunu Yeniden Oluştur&r", "&7{description}", "&eSol tıklama"]
+
+[rtp.status]
+ready = "Hazır"
+warming = "Hazırlanıyor"
+rerolling = "Yeniden seçiliyor"
+backoff = "Yeniden deneme bekleniyor"
+world_unavailable = "Hedef Dünya Kullanılamıyor"
+integration_failed = "Erişim Entegrasyonu Başarısız"
+failed = "Başarısız"
+idle = "Beklemede"
+retry = "&7Yeniden deneme: &c{duration}"
+active = "&7Etkin: {readiness}"
+standby = "&7Bekleme: {readiness}"
+rotation = "&7Taslak yenileme düzeni: &b{rotation}"
+pool = "&7Boş: &b{free}&7  Ayrılmış: &b{reserved}"
+target_missing = "&cHedef dünyası yüklenmedi."
+access_failed = "&cHedef erişim kontrolleri başarısız oldu ve erişim reddedildi."
+header = ["&6&lRastgele Hedef Durumu&r", "&7Durum: {state}"]
+
+[rtp.rotation]
+static = "Sabit"
+timed = "Zamanlı"
+trip = "Her Yolculuktan Sonra"
+
+[rtp.numeric]
+center_x = "Merkez X"
+center_z = "Merkez Z"
+minimum_radius = "En düşük yarıçap"
+maximum_radius = "En yüksek yarıçap"
+lower_y = "Alt Y"
+upper_y = "Üst Y"
+preferred_y = "Tercih edilen Y"
+cycle = "Döngü Süresi"
+private_rotation = "Oyuncuya Özel Yenileme Süresi"
+lease = "Boştaki rezervasyon bekleme süresi"
+release = "Özel rezervasyonu bırakma gecikmesi"
+link = ["&e&l{label} &f&l{value}&r", "&7Açık azaltma/artırma denetimlerini gösterir.", "&eSol tıklayın"]
+target_unavailable = ["&b&lHedef Dünya Kullanılamıyor&r", "&7Bu değeri düzenlemeden önce hedef dünyayı yükleyin."]
+value = ["&b&l{value}&r", "&7Mevcut taslak değeri."]
+adjust = ["&e&l{direction}{step}&r", "&7Taslağı {direction}{step} kadar ayarlayın.", "&eSol tıklayın"]
+header = ["&b&l{label}&r", "&7{description}"]
+
+[rtp.numeric.description]
+center = "Özel merkezi bu eksen boyunca taşır."
+minimum_radius = "Hedef halka alanının iç kenarı."
+maximum_radius = "Hedef halka alanının dış kenarı."
+y = "Güvenli ayak konumu aranacak yükseklik sınırları."
+cycle = "Paylaşılan zamanlı döngüler arasındaki süre."
+private_rotation = "Her oyuncu için hazırlanan hedefin azami bekleme süresi."
+lease = "Herkes ayrıldıktan sonra hazırlanan hedefleri kısa süre etkin tutar."
+release = "Kullanılmamış özel rezervasyonların serbest bırakılması için gecikme."
+
+[rtp.duration]
+hours = "{value}h"
+minutes = "{value}m"
+seconds = "{value}s"
+decimal_seconds = "{value}s"
+
+[rtp.biome]
+any_label = "Herhangi"
+unavailable_label = "Kullanılamıyor"
+header = ["&b&lHedef Biyom&r", "&7Arama bu biyomu tercih eder ve yakında bulunamazsa herhangi bir güvenli noktaya geri döner."]
+any_selected = ["&a&lHerhangi Bir Biyom&r", "&7Biyom tercihi yok.", "&aSeçili"]
+any_available = ["&b&lHerhangi Bir Biyom&r", "&7Biyom tercihini temizleyin.", "&eSeçmek için sol tıklayın"]
+current = ["&a&l{biome}&r", "&7{key}", "&aSeçili"]
+available = ["&b&l{biome}&r", "&7{key}", "&eSeçmek için sol tıklayın"]
+empty = ["&7Hedef dünya için kullanılabilir biyom yok."]
+previous = ["&e&lÖnceki Biyomlar&r", "&7Önceki sayfayı göster.", "&eSol tıklayın"]
+next = ["&e&lSonraki Biyomlar&r", "&7Bir sonraki sayfayı göster.", "&eSol tıklayın"]
+
+[rtp.overview]
+destination = ["&e&lHedef & Bölge&r", "&7Dünya, merkez ve yarıçap.", "&eSol tıklama"]
+landing = ["&e&lİniş Kuralları&r", "&7Yüzey ve yükseklik davranışları.", "&eSol tıklayın"]
+routing = ["&e&lYenileme & Hedef Havuzu&r", "&7Paylaşım, yenileme ve rezervasyon süreleri.", "&eSol tıklayın"]
+effects = ["&e&lEfektler&r", "&7Projeksiyon kenarı ve portal sesi.", "&eSol tıklama"]
+reset_defaults = ["&e&lVarsayılanlara sıfırla&r", "&7Bu portalın rastgele ışınlanma ayarlarını hemen varsayılanlara döndürür.", "&eSol tıklayın"]
+
+[rtp.navigation]
+back_portal = ["&e&lPortala Dön&r", "&7Portal menüsüne geri dönün.", "&eSol tıklayın"]
+overview = ["&e&lGenel Bakış&r", "&7RTP genel bakışına geri dönün.", "&eSol tıklayın"]
+back_category = ["&e&lGeri dön&r", "&7Önceki kategoriye geri dönün.", "&eSol tıklayın"]
+
+[rtp.destination]
+header = ["&b&lHedef & Bölge&r", "&7Her seçenek normal sol tıklama kullanır."]
+world_current = ["&a&l{world}&r", "&7Mevcut hedef dünya.", "&aSeçili"]
+world_available = ["&b&l{world}&r", "&7Yüklenmiş bu dünyayı kullanın.", "&eSeçmek için sol tıklayın"]
+previous_worlds = ["&e&lÖnceki Dünyalar&r", "&7Önceki sayfayı göster.", "&eSol tıklayın"]
+next_worlds = ["&e&lSonraki Dünyalar&r", "&7Bir sonraki sayfayı göster.", "&eSol tıklayın"]
+biome_link = ["&e&lHedef Biyom &f&l{value}&r", "&7Seçilen biyoma inmeyi tercih eder.", "&eSol tıklayın"]
+center_portal_selected = ["&a&lPortala Göre Merkez&r", "&7Halka alanını bu portalın üzerinde merkezleyin.", "&aSeçili"]
+center_portal_available = ["&b&lPortala Göre Merkez&r", "&7Halka alanını bu portalın üzerinde merkezleyin.", "&eSeçmek için sol tıklayın"]
+center_custom_selected = ["&a&lÖzel Merkez&r", "&7Düzenlenebilir X ve Z koordinatlarını kullanın.", "&aSeçili"]
+center_custom_available = ["&b&lÖzel Merkez&r", "&7Düzenlenebilir X ve Z koordinatlarını kullanın.", "&eSeçmek için sol tıklayın"]
+reset_center = ["&e&lMerkezi / Hedefi Sıfırla&r", "&7Kaynak dünyayı ve portal merkezini kullanın.", "&eSol tıklayın"]
+
+[rtp.landing]
+header = ["&b&lİniş Kuralları&r", "&7Yüzey veya tercih edilen yükseklik davranışını ve güvenlik modunu seçin."]
+surface_selected = ["&a&lYüzey&r", "&7SAFE sudan ve ağaç tepelerinden kaçınır. UNSAFE en üstteki yüzeyi kullanır.", "&aSeçili"]
+surface_available = ["&b&lYüzey&r", "&7SAFE sudan ve ağaç tepelerinden kaçınır. UNSAFE en üstteki yüzeyi kullanır.", "&eSeçmek için sol tıklayın"]
+preferred_selected = ["&a&lTercih edilen / tam yükseklik&r", "&7SAFE dışarı doğru arar. UNSAFE tercih edilen Y değerini aynen kullanır.", "&aSeçili"]
+preferred_available = ["&b&lTercih edilen / tam yükseklik&r", "&7SAFE dışarı doğru arar. UNSAFE tercih edilen Y değerini aynen kullanır.", "&eSeçmek için sol tıklayın"]
+safe_policy = ["&b&lİniş güvenliği: &f&l{mode}&r", "&7SAFE suyu, tehlikeleri, ağaçları, çarpışmaları ve ayak altında destek olmayan yerleri reddeder.", "&7UNSAFE seçilen yüzeyi veya tercih edilen tam Y değerini olduğu gibi kabul eder.", "&eDeğiştirmek için sol tıklayın"]
+
+[rtp.effects]
+header = ["&b&lEfektler&r", "&7Görsel değişiklikler hedefi yeniden oluşturmaz."]
+rim_on_selected = ["&a&lProjeksiyon Kenarı Açık&r", "&7Portalın kenarında hazırlık durumunu gösterir.", "&aSeçili"]
+rim_on_available = ["&b&lProjeksiyon Kenarı Açık&r", "&7Portalın kenarında hazırlık durumunu gösterir.", "&eSeçmek için sol tıklayın"]
+rim_off_selected = ["&a&lProjeksiyon Kenarı Kapalı&r", "&7Portalın kenarındaki hazırlık durumunu gizler.", "&aSeçili"]
+rim_off_available = ["&b&lProjeksiyon Kenarı Kapalı&r", "&7Portalın kenarındaki hazırlık durumunu gizler.", "&eSeçmek için sol tıklayın"]
+sound_on_selected = ["&a&lPortal Sesleri Açık&r", "&7Bu RTP portalının efekt ve seyahat seslerini çalar.", "&aSeçili"]
+sound_on_available = ["&b&lPortal Sesleri Açık&r", "&7Bu RTP portalının efekt ve seyahat seslerini çalar.", "&eSeçmek için sol tıklayın"]
+sound_off_selected = ["&a&lPortal Sesleri Kapalı&r", "&7Bu RTP portalını susturur; parçacıklar açık kalır.", "&aSeçili"]
+sound_off_available = ["&b&lPortal Sesleri Kapalı&r", "&7Bu RTP portalını susturur; parçacıklar açık kalır.", "&eSeçmek için sol tıklayın"]
+
+[rtp.confirm]
+reroll = ["&b&lOrtak Rota Yeniden Seçilsin mi?&r", "&7Yeni hedef hazır olana kadar mevcut projeksiyon çevrimiçi kalır."]
+rebuild = ["&b&lÖzel Hedef Havuzu Yeniden Oluşturulsun mu?&r", "&7Boş adaylar yeniden oluşturulurken mevcut rezervasyonlar korunur."]
+confirm = ["&e&lOnayla&r", "&7Eylemi şimdi gerçekleştirin.", "&eSol tıklayın"]
+cancel = ["&e&lİptal et&r", "&7Çalışma süresi durumunu değiştirmeden geri dönün.", "&eSol tıklayın"]
+
+[item]
+portal_wand = ["&6&lPortal Asası&r"]
+portal_rune = ["&6&lPortal Rünü&r"]
+wormhole_rune = ["&6&lSolucan Deliği Rünü&r"]
+
+[item.door]
+entangled_pair = ["&6Dolaşık Kapı Çifti", "&7Otomatik olarak bağlı iki solucan deliği kapısı içerir.", "&7A ve B uçlarını ayırmak için kullanın."]
+paired = ["&6Solucan Deliği Kapısı {endpoint}", "&7{other} ucuna otomatik olarak bağlanır.", "&7Kapıyı açıp fiziksel olarak eşiğinden geçin."]
+personal = ["&bKişisel Boyut Kapısı", "&7Her yolcu kendi kalıcı boyutuna girer.", "&7Aynı yolcu her zaman aynı yere ulaşır."]
+public = ["&6Ortak Boyut Kapısı", "&7Her yolcu bu kapının ortak boyutuna girer.", "&7Kapıyı kırıp taşımak ortak hedefi değiştirmez."]
+return = ["&aBoyutsal Çıkış Kapısı", "&7Yolcuları bu cep boyutundan geri gönderir.", "&7Bu kapı kendi cep boyutuna bağlıdır."]
+skin = ["&6Boyut Kapısı Görünümü", "&7Boyut kapısını oyuncunun kullanabildiği bir kapıyla birleştirin."]
+entangled_pair_recipe = ["&6Dolaşık Kapı Çifti", "&7Otomatik olarak bağlı iki solucan deliği kapısı içerir."]
+personal_recipe = ["&bKişisel Boyut Kapısı", "&7Her yolcu kendi kalıcı boyutuna girer."]
+public_recipe = ["&6Ortak Boyut Kapısı", "&7Her yolcu bu kapının ortak boyutuna girer."]
+entangled_trapdoor_pair = ["&6Dolaşık Kapak Çifti", "&7Otomatik olarak bağlı iki solucan deliği kapağı içerir.", "&7A ve B uçlarını ayırmak için kullanın."]
+paired_trapdoor = ["&6Solucan Deliği Kapağı {endpoint}", "&7{other} ucuna otomatik olarak bağlanır.", "&7Kapağı açıp içinden aşağı düşün."]
+personal_trapdoor = ["&bKişisel Boyut Kapağı", "&7Her yolcu kendi kalıcı boyutuna girer.", "&7Aynı yolcu her zaman aynı yere ulaşır."]
+public_trapdoor = ["&6Ortak Boyut Kapağı", "&7Her yolcu bu kapağın ortak boyutuna girer.", "&7Kapağı kırıp taşımak ortak hedefi değiştirmez."]
+trapdoor_skin = ["&6Boyut Kapağı Görünümü", "&7Boyut kapağını elle açılabilen bir kapakla birleştirin."]
+entangled_trapdoor_pair_recipe = ["&6Dolaşık Kapak Çifti", "&7Otomatik olarak bağlı iki solucan deliği kapağı içerir."]
+personal_trapdoor_recipe = ["&bKişisel Boyut Kapağı", "&7Her yolcu kendi kalıcı boyutuna girer."]
+public_trapdoor_recipe = ["&6Ortak Boyut Kapağı", "&7Her yolcu bu kapağın ortak boyutuna girer."]
+
+# ==== Headline lane blocks. Each lane adds its tables between its own markers only. ====
+
+# ---- lane:rules (rules.*) ----
+[rules]
+route_card = "{portal} > {destination} | {amount} | {state}"
+
+[rules.menu]
+entry = ["&6Kurallar", "&7Kimin gecebilecegi, maliyeti ve sonrasinda ne olacagi."]
+cooldown = ["&6Bekleme: {seconds}s", "&7Sol ve sag tik degistirir, shift 10 saniyelik adimlar."]
+warmup = ["&6Hazirlik: {seconds}s", "&7Sol ve sag tik degistirir, shift 10 saniyelik adimlar."]
+group = ["&6Bekleme grubu: {value}", "&7Bir grup adi yazmak icin tikla."]
+pushback = ["&6Geri itme: {value}", "&7Sol ve sag tik degeri degistirir."]
+sound = ["&6Ret sesi: {value}", "&7Sol ve sag tik degeri degistirir."]
+charges = ["&6Sarj: {count}", "&7Sol ve sag tik havuz boyutunu degistirir."]
+default_outcome = ["&6Varsayilan: {mode}", "&7Izin ver ve reddet arasinda gecmek icin tikla."]
+rules = ["&6Kurallar ({count})", "&7Kural listesini acmak icin tikla."]
+rule = ["&6{name}", "&7{value} &8- shift tik kurali kaldirir."]
+add_rule = ["&aKural ekle", "&7Bir kural kimligi yazmak icin tikla."]
+line = ["&f{value}", "&7Shift tik bu satiri kaldirir."]
+add_line = ["&aSatir ekle", "&7Tikla ve kind=PERMISSION;node=grup.vip yaz."]
+templates = ["&6Sablonlar", "&7Kayitli bir sablonu uygulamak icin tikla."]
+template = ["&f{name}", "&7Bu sablonu uygulamak icin tikla."]
+back = ["&7Geri", "&8Onceki sayfaya."]
+page = ["&7Sayfa {page} / {pages}", "&8Sayfa cevirmek icin tikla."]
+
+[rules.route]
+unlisted = "Bilinmiyor"
+free = "Ücretsiz"
+ready = "Hazır"
+cooldown = "{seconds}s"
+
+[rules.denied]
+default = "Bu portal seni reddetti."
+entity_class = "Bu portalı yalnızca {mode} kullanabilir."
+key = "{portal} için anahtara ihtiyacın var."
+time = "{portal} şu anda kapalı."
+cooldown = "{portal} portalını tekrar kullanmadan önce {seconds}s bekle."
+charges = "{portal} portalında şarj kalmadı."
+cost = "{portal} portalını kullanmak için {amount} ödeyemezsin."
+
+[rules.notice]
+rule_added = "{name} kurali eklendi."
+rule_removed = "{name} kurali kaldirildi."
+invalid = "Bu uygulanamadi: {reason}"
+applied = "{name} sablonu uygulandi."
+
+[rules.prompt]
+group = "&bBekleme grubunun adini yaz (ya da \"{cancel}\"):"
+rule_id = "&bYeni kural icin bir kimlik yaz (ya da \"{cancel}\"):"
+line = "&bBir kural satiri yaz, ornegin kind=PERMISSION;node=grup.vip (ya da \"{cancel}\"):"
+
+[rules.warmup]
+countdown = "Hareket etme: {seconds}s"
+cancelled = "Hazırlık iptal edildi."
+
+[rules.command]
+exported = "{portal} kurallari {name} sablonuna yazildi."
+imported = "{name} sablonu {portal} portalina uygulandi."
+templates = "Kural sablonlari: {value}"
+no_templates = "Kayitli kural sablonu yok."
+template_missing = "{name} adinda bir kural sablonu yok."
+template_invalid = "{name} sablonu gecersiz: {reason}"
+portal_missing = "{name} adinda bir portal yok."
+portal_ambiguous = "{count} portal {name} adini tasiyor; birini yeniden adlandir."
+not_in_portal = "Bir portalin icinde dur ya da portal secenegiyle bir portal belirt."
+key_given = "{portal} icin bir anahtar aldin."
+failed = "Tamamlanamadi: {reason}"
+
+[rules.command.help]
+rules = "Geçiş kuralları: şablonlar, anahtarlar ve portal profilleri"
+export = "Bir portalin kurallarini sablon dosyasina yaz"
+"export.name" = "Yazilacak sablonun adi"
+"export.portal" = "Portal adi, ya da icinde durdugun portal"
+import = "Icinde durdugun portala bir sablon uygula"
+"import.name" = "Okunacak sablonun adi"
+"import.portal" = "Portal adi, ya da icinde durdugun portal"
+apply = "Her yerden adi verilen bir portala sablon uygula"
+"apply.name" = "Okunacak sablonun adi"
+"apply.portal" = "Sablonun uygulanacagi portalin adi"
+list = "Kayitli kural sablonlarini listele"
+key = "Kendine bir portal anahtari ver"
+"key.portal" = "Anahtarin olusturulacagi portalin adi"
+"key.uses" = "Anahtarin izin verdigi gecis sayisi, 0 sinirsiz"
+# ---- end lane:rules ----
+
+# ---- lane:access (access.*) ----
+[access.denied]
+role = "&c{portal} kullanma izniniz yok."
+claim = "&cBir arazi talebi {portal} portalını engelliyor."
+limit = "&cZaten {count} portalınız var; sınır {maximum}."
+
+[access.construct]
+denied = "&cBuraya portal inşa edemezsiniz: {reason}."
+
+[access.claim]
+reason = "{plugin} bu araziyi koruyor"
+failure = "{plugin} sorgulanamadı"
+
+[access.transfer]
+done = "&8[&6Wormholes&8] &a{portal} artık {name} oyuncusuna ait."
+
+[access.key]
+set = "&a{portal} portalının izin anahtarı artık {key}."
+taken = "&cİzin anahtarı {key} zaten kullanılıyor."
+invalid = "&cİzin anahtarları a-z, 0-9, nokta, tire ve alt çizgi kullanır, en fazla 64 karakter."
+
+[access.player]
+not_found = "&c{name} adında bir oyuncu yok."
+
+[access.portal]
+not_found = "&8[&6Wormholes&8] &c{portal} adında bir portal yok."
+ambiguous = "&8[&6Wormholes&8] &c{count} portal {portal} ile eşleşiyor; portal kimliğini kullanın."
+
+[access.role]
+changed = "&a{name} artık {portal} portalında {state}."
+removed = "&a{name} artık {portal} portalında bir role sahip değil."
+owner_always = "&7Sahip her zaman tam erişime sahiptir."
+
+[access.listed]
+changed = "&a{portal} artık genel dizinde {state}."
+
+[access.group]
+added = "&a{portal} artık {node} için erişim veriyor."
+cleared = "&a{portal} artık gruplara göre erişim vermiyor."
+
+[access.limits]
+report = "&8[&6Wormholes&8] &7{name} {count} portala sahip; sınır {maximum}."
+unlimited = "&8[&6Wormholes&8] &7{name} {count} portala sahip ve sınırı yok."
+
+[access.prompt]
+player = "&7Sohbete bir oyuncu adı yazın veya durdurmak için {cancel} yazın."
+key = "&7Sohbete yeni izin anahtarını yazın veya durdurmak için {cancel} yazın."
+group = "&7Sohbete bir izin düğümü yazın veya durdurmak için {cancel} yazın."
+
+[access.label]
+owner = "Sahip"
+co_owner = "Ortak sahip"
+user = "Güvenilir"
+denied = "Reddedildi"
+listed = "Listede"
+unlisted = "Gizli"
+
+[access.menu]
+entry = ["&b&lErişim&r", "&7Roller, gruplar ve izin anahtarı."]
+placard = ["&b&lErişim: {portal}&r", "&7Sahip: &f{owner}", "&7Roller: &f{count}", "&7Anahtar: &f{key}"]
+add = ["&a&lOyuncu ekle&r", "&7Rol vermek için sohbete bir ad yazın."]
+role = ["&f&l{name}&r", "&7Rol: &f{state}", "&7Sol veya sağ tıklama rolü değiştirir.", "&7Shift + sol tıklama rolü kaldırır."]
+groups = ["&e&lİzinli gruplar&r", "&7{count} izin düğümü erişim veriyor.", "&7Sol tıklama ekler, sağ tıklama temizler."]
+key = ["&b&lİzin anahtarı&r", "&7{key}", "&7Sol tıklama anahtarı değiştirir."]
+listed = ["&b&lGenel dizin&r", "&7{state}", "&7Sol tıklama durumu değiştirir."]
+
+[access.command.help]
+access = "Portal erişim listeleri, sahiplik ve sınırlar"
+transfer = "Bir portalı başka bir oyuncuya devredin"
+"transfer.portal" = "Portal adı veya kimliği"
+"transfer.player" = "Yeni sahibin adı"
+key = "Bir portalın sabit izin anahtarını ayarlayın"
+"key.portal" = "Portal adı veya kimliği"
+"key.key" = "Yeni izin anahtarı"
+limits = "Bir oyuncunun kaç portala sahip olduğunu ve olabileceğini gösterir"
+"limits.player" = "İncelenecek oyuncu; varsayılan sizsiniz"
+# ---- end lane:access ----
+
+# ---- lane:nexus (nexus.* and atlas.*) ----
+[nexus]
+dialed = "&8[&6Wormholes&8] &a{portal} {address} adresini çevirdi: &f{destination}"
+created = "&8[&6Wormholes&8] &a{name} ağı oluşturuldu."
+deleted = "&8[&6Wormholes&8] &a{name} ağı silindi."
+joined = "&8[&6Wormholes&8] &a{portal}, {address} adresiyle {name} ağına katıldı."
+left = "&8[&6Wormholes&8] &a{portal}, {name} ağından ayrıldı."
+
+[nexus.dial]
+unknown = "&8[&6Wormholes&8] &c{address} adresinde portal yok."
+none = "&8[&6Wormholes&8] &c{portal} hiçbir ağa bağlı değil."
+debounced = "&8[&6Wormholes&8] &7Çok hızlı çeviriyorsun; biraz bekle."
+managed = "&8[&6Wormholes&8] &c{portal} yönetilen bir portal, çevrilemez."
+
+[nexus.address]
+taken = "&8[&6Wormholes&8] &c{address} adresi {name} ağında zaten kullanılıyor."
+set = "&8[&6Wormholes&8] &a{portal} artık {address} adresine yanıt veriyor."
+invalid = "&8[&6Wormholes&8] &cAdreslerde yalnızca şu karakterler kullanılır: {value}"
+
+[nexus.network]
+unknown = "&8[&6Wormholes&8] &c{name} adlı bir ağ yok."
+exists = "&8[&6Wormholes&8] &c{name} adlı bir ağ zaten var."
+full = "&8[&6Wormholes&8] &c{name} ağında zaten {count} portal var."
+limit = "&8[&6Wormholes&8] &cZaten {count} ağın sahibisin."
+
+[nexus.portal]
+unknown = "&8[&6Wormholes&8] &c{portal} adlı bir portal yok."
+not_member = "&8[&6Wormholes&8] &c{portal}, {name} ağının üyesi değil."
+
+[nexus.visibility]
+set = "&8[&6Wormholes&8] &a{name} artık {value}."
+
+[nexus.hub]
+set = "&8[&6Wormholes&8] &a{portal}, {name} ağının merkezi."
+
+[nexus.list]
+empty = "&8[&6Wormholes&8] &7Henüz ağ yok."
+entry = "&7{name} &8- &f{count} portal&7, {value}, sahibi &f{owner}"
+
+[nexus.info]
+header = "&6{name} &8- &f{count} portal&7, {value}, {mode}"
+member = "&e{address} &f{portal} &7{world} dünyasında &8{state}"
+
+[nexus.doctor]
+header = "&8[&6Wormholes&8] &6Bağlantı denetimi: {count} bulgu."
+clean = "&8[&6Wormholes&8] &aBağlantı sorunu bulunamadı."
+oneway = "&e{portal} -> {destination} geri bağlantısı yok."
+dangling = "&c{portal} eksik bir hedefi gösteriyor."
+unloaded = "&e{portal} yüklenmemiş {world} dünyasını gösteriyor."
+offline = "&c{portal} {server} sunucusunu gösteriyor, {count} gündür çevrimdışı."
+
+[nexus.redstone]
+set = "&8[&6Wormholes&8] &a{portal} kırmızı taş: {value}."
+
+[nexus.reciprocal]
+paired = "&8[&6Wormholes&8] &a{portal} ile {destination} artık iki yönlü bağlı."
+unpaired = "&8[&6Wormholes&8] &a{portal} ile {destination} artık geri bağlanmıyor."
+denied = "&8[&6Wormholes&8] &cHem {portal} hem {destination} üzerinde yetkin yok."
+
+[nexus.prompt]
+network_name = "&bAğ adını sohbete yaz (ya da '{cancel}'):"
+address = "&bYeni adresi sohbete yaz (ya da '{cancel}'):"
+
+[nexus.menu]
+entry = ["&b&lAğ&r", "&7Ağlar, adresler, çevirme, hedef kuralları, kırmızı taş.", "&7Ağ: &f{name}", "&7Adres: &f{address}", "&eSol tık"]
+placard = ["&b&lAğ: {name}&r", "&7Adres: &f{address}", "&7Üye: &f{count}"]
+join = ["&a&lBir ağa katıl&r", "&7Bu portalı bir ağa ekle ve ona adres ver.", "&eSol tık"]
+leave = ["&c&l{name} ağından ayrıl&r", "&7Bu portalı ve adresini ağdan çıkar.", "&eSol tık"]
+create = ["&a&lAğ oluştur&r", "&7Yeni bir ağa ad ver ve bu portalı içine koy.", "&eSol tık"]
+address = ["&e&lAdres: {address}&r", "&7Diğer portalların buraya ulaşmak için çevirdiği kısa kod.", "&eSol tık yeniden yazar. &eSağ tık yeniden çeker."]
+visibility = ["&e&lGörünürlük: {value}&r", "&7Herkese açık ağları herkes, üye ağlarını üyeler, gizli ağları kimse görmez.", "&eSol tık değiştirir"]
+topology = ["&e&lTopoloji: {value}&r", "&7Örgü her üyeyi çevirir, merkez tek portaldan geçer, zincir ve halka komşuları çevirir.", "&eSol tık değiştirir"]
+reciprocal = ["&e&lGeri bağlantı: {state}&r", "&7Hedefi bu portala geri bakar durumda tut.", "&eSol tık açar kapatır"]
+policy = ["&e&lHedefler: {mode}&r", "&7{count} kayıt. Sıralı, ağırlıklı, zamanlanmış, oyuncuya özel ya da dönüş.", "&eSol tık kipi değiştirir. &eSağ tık listeyi boşaltır."]
+redstone = ["&e&lKırmızı taş: {value}&r", "&7Çerçevenin yanındaki yükselen kenar ne yapar ve karşılaştırıcı ne okur.", "&eSol tık eylemi seçer. &eSağ tık karşılaştırıcı çıkışını."]
+dial = ["&b&lÇevir&r", "&7Bu portalı ağındaki başka bir adrese yönelt.", "&eSol tık"]
+dial_entry = ["&e{address} &f{portal}", "&7{world}", "&b{state}"]
+link_and_return = ["&d&lBağla ve döndür&r", "&7{destination} portalını da {portal} portalına geri yönelt.", "&eSol tık"]
+
+[atlas]
+title = "&8Atlas &7- &f{count} portal"
+row = "&f{portal} &8| &7{destination} &8| &b{state}"
+empty = "&8[&6Wormholes&8] &7Henüz portal keşfetmedin."
+disabled = "&8[&6Wormholes&8] &cBu sunucuda atlas kapalı."
+only_players = "&8[&6Wormholes&8] &cAtlas yalnızca oyunculara aittir."
+no_permission = "&8[&6Wormholes&8] &cAtlası açma yetkin yok."
+usage = ["&8[&6Wormholes&8] &7/atlas &8- &7portal listeni aç", "&8[&6Wormholes&8] &7/atlas favorites &8- &7yalnızca sabitlenen portallar", "&8[&6Wormholes&8] &7/atlas recents &8- &7son kullandığın portallar", "&8[&6Wormholes&8] &7/atlas guide \\<portal> &8- &7yön göster; /atlas guide off durdurur"]
+
+[atlas.favorite]
+added = "&8[&6Wormholes&8] &a{portal} sabitlendi."
+removed = "&8[&6Wormholes&8] &a{portal} sabitlemesi kaldırıldı."
+full = "&8[&6Wormholes&8] &cZaten {count} portal sabitledin."
+
+[atlas.guide]
+bearing = "&b{portal} &f{value}"
+set = "&8[&6Wormholes&8] &a{portal} yönüne kılavuz açık."
+cleared = "&8[&6Wormholes&8] &aKılavuz kapalı."
+unknown = "&8[&6Wormholes&8] &cAtlasında {portal} adlı bir portal yok."
+
+[atlas.menu]
+row = ["&6{portal}", "&7{world} &8- &f{destination}", "&b{state}", "", "&eSol tık çevirir. &eSağ tık sabitler. &eShift+sol tık kılavuz açar."]
+favorites = ["&d&lYalnızca sabitlenen: {state}&r", "&7Yalnızca sabitlediğin portalları göster.", "&eSol tık"]
+recents = ["&b&lYalnızca son kullanılan: {state}&r", "&7Yalnızca son kullandığın portalları göster.", "&eSol tık"]
+guide = ["&a&lKılavuz: {portal}&r", "&7Kılavuzlanan portalın yönünü eylem çubuğunda göster.", "&eSol tık durdurur"]
+# ---- end lane:nexus ----
+
+# ---- lane:doors (doorview.* and pockets.*) ----
+[doorview]
+"disabled" = "&8[&6Wormholes&8] &cKapi yansitmasi wormholes.toml dosyasinda kapali."
+"toggle.inherit" = "&8[&6Wormholes&8] &7Bu kapinin yansitmasi: &fdevralinan&7."
+"toggle.on" = "&8[&6Wormholes&8] &aBu kapinin yansitmasi: acik."
+"toggle.off" = "&8[&6Wormholes&8] &eBu kapinin yansitmasi: kapali."
+"state.inherit" = "devralinan"
+"state.on" = "acik"
+"state.off" = "kapali"
+"menu.projection" = ["&b&lYansitma: {state}&r", "&7Hedefi bu kapi boslugundan gosterir.", "&eDegistirmek icin sol tikla"]
+
+[pockets]
+"confirm.overwrite" = ["&8[&6Wormholes&8] &cBu, &f{space}&c cebinin icindeki her seyi degistirir.", "&8[&6Wormholes&8] &7Devam etmek icin ayni komutu &fconfirm=true&7 ile calistir."]
+"denied.build" = "&8[&6Wormholes&8] &cBu cepte insaatci degilsin."
+"denied.pvp" = "&8[&6Wormholes&8] &cBu cepte dovus kapali."
+"instance.none" = "&8[&6Wormholes&8] &cBu cep bir ornek degil."
+"instance.reset" = "&8[&6Wormholes&8] &f{space}&a cep ornegi sifirlandi."
+"room.added" = "&8[&6Wormholes&8] &f{space}&a cebine &f{count}&a numarali oda eklendi."
+"room.blocked" = "&8[&6Wormholes&8] &cKapiyi bir ic duvara koy."
+"room.limit" = "&8[&6Wormholes&8] &cBu cep zaten en fazla &f{count}&c odaya sahip."
+"roster.added" = "&8[&6Wormholes&8] &a{name}&a cep listesine &f{value}&a olarak eklendi."
+"roster.missing" = "&8[&6Wormholes&8] &c{name}&c bu cebin listesinde degil."
+"roster.removed" = "&8[&6Wormholes&8] &e{name}&e cep listesinden cikarildi."
+"roster.role" = "&8[&6Wormholes&8] &a{name}&a artik bu cepte &f{value}&a."
+"rules.invalid" = "&8[&6Wormholes&8] &cBilinmeyen cep kurali &f{key}&c."
+"rules.set" = "&8[&6Wormholes&8] &a{key} &7= &f{value}"
+"snapshot.missing" = "&8[&6Wormholes&8] &cBu cebin &f{name}&c adinda bir anlik goruntusu yok."
+"snapshot.restored" = "&8[&6Wormholes&8] &f{name}&a anlik goruntusu &f{space}&a cebine geri yuklendi."
+"snapshot.saved" = "&8[&6Wormholes&8] &f{space}&a cebinin &f{name}&a anlik goruntusu kaydedildi."
+"template.applied" = "&8[&6Wormholes&8] &f{name}&a sablonu &f{space}&a cebine uygulandi."
+"template.list" = "&8[&6Wormholes&8] &7Sablonlar (&f{count}&7): &f{value}"
+"template.missing" = "&8[&6Wormholes&8] &f{name}&c adinda bir cep sablonu yok."
+# ---- end lane:doors ----
+
+# ---- lane:mesh (mesh.*) ----
+[mesh]
+pending = "&8[&6Wormholes&8] &e{server}&7, &f{name}&7 üzerinden katılmak istiyor: /wh network accept {server}"
+accepted = "&8[&6Wormholes&8] &a&f{server}&a ağa kabul edildi."
+rejected = "&8[&6Wormholes&8] &c&f{server}&c reddedildi ve tanıtımı atıldı."
+tombstoned = "&8[&6Wormholes&8] &f{server}&7 ağ genelinde kaldırıldı."
+disabled = "&8[&6Wormholes&8] &7Mesh federasyonu &cdevre dışı&7 ([network.mesh] enabled = false)."
+
+[mesh.introductions]
+none = "&8[&6Wormholes&8] &7Onay bekleyen tanıtım yok."
+unknown = "&8[&6Wormholes&8] &c{server} onay beklemiyor."
+
+[mesh.members]
+none = "&8[&6Wormholes&8] &7Henüz bilinen ağ üyesi yok."
+row = "&8[&6Wormholes&8] &f{server}&7 {state} &8{fingerprint}"
+
+[mesh.versions]
+none = "&8[&6Wormholes&8] &7Henüz bağlanan eş yok."
+row = "&8[&6Wormholes&8] &f{server}&7: protokol &f{value}&7, eklenti &f{name}&7, yetenekler &f{state}"
+reduced = "&8[&6Wormholes&8] &e{server}&7 kısıtlı yeteneklerle bağlanıyor: &f{reason}"
+
+[mesh.drain]
+on = "&8[&6Wormholes&8] &eBoşaltma modu açık: boşaltma kapatılana kadar bu sunucu yeni gelişleri reddeder."
+off = "&8[&6Wormholes&8] &aBoşaltma modu kapalı: bu sunucu yeniden gelişleri kabul ediyor."
+state = "&8[&6Wormholes&8] &7Boşaltma modu {state}."
+invalid = "&8[&6Wormholes&8] &cBoşaltma durumu on veya off olmalıdır, alınan: {value}."
+
+[mesh.queue]
+position = "&7Boş sunucu bekleniyor: sıra &f{count}&7, &f{seconds}&7sn"
+timeout = "&cHiçbir hedef sunucuda zamanında yer açılmadı."
+
+[mesh.policy]
+none = "&cŞu anda kullanılabilir bir hedef yok."
+set = "&8[&6Wormholes&8] &a&f{portal}&a üzerindeki ilke: {value}"
+cleared = "&8[&6Wormholes&8] &7&f{portal}&7 üzerindeki ilke kaldırıldı; yeniden düz hedefine bağlanıyor."
+portal_unknown = "&8[&6Wormholes&8] &c{portal} adında yerel bir portal yok."
+invalid = "&8[&6Wormholes&8] &cGeçersiz ilke: {reason}"
+
+[mesh.command.help]
+members = "Tüm ağ üyelerini bağlantı durumu ve anahtar parmak iziyle listele"
+pending = "Onay bekleyen tanıtılmış sunucuları listele"
+accept = "Tanıtılmış bir sunucuya güven ve rotasını kaydet"
+reject = "Bir sunucunun bekleyen tanıtımını at"
+versions = "Her eşin protokolünü, eklenti sürümünü ve yeteneklerini göster"
+drain = "Bu sunucuyu hedef rotasyonundan çıkar veya geri al"
+policy = "Bir geçidin hedef ilkesini ayarla veya kaldır"
+
+[mesh.command.param.accept]
+server = "Tanıtılmış sunucu adı (bkz. /wh network pending)"
+
+[mesh.command.param.reject]
+server = "Reddedilecek tanıtılmış sunucu adı"
+
+[mesh.command.param.drain]
+state = "on veya off; boş bırakılırsa mevcut durum gösterilir"
+
+[mesh.command.param.policy]
+portal = "Yerel portal adı veya kimliği"
+candidates = "Virgülle ayrılmış sunucu:portal[:ağırlık] girdileri; boş bırakılırsa ilke kaldırılır"
+strategy = "FIRST_AVAILABLE, LEAST_LOADED, ROUND_ROBIN, STICKY veya NEAREST"
+headroom = "Bir adayın bildirmesi gereken boş oyuncu yeri"
+tps = "Bir adayın bildirmesi gereken en düşük TPS; 0 TPS'yi yok sayar"
+queue = "Tüm adaylar doluyken yolcuları beklet"
+# ---- end lane:mesh ----
+
+# ---- lane:transit (transit.*) ----
+[transit]
+bounced = "{portal} seni geri itti."
+
+[transit.denied]
+membrane = "{portal} yalnızca önden geçilebilir."
+convoy_size = "Konvoyunda {count} varlık var; sınır {value}."
+convoy_fit = "Konvoyun {portal} içinden sığmıyor."
+convoy_member = "Konvoyunun bir kısmı {portal} kullanamaz."
+
+[transit.convoy]
+waiting = "Tüm konvoyunu {portal} içinden geçir."
+failed = "Konvoy aktarımı başarısız: {reason}."
+
+[transit.menu]
+entry = ["&b&lGeçiş&r", "&7Momentum, yön, zar, sekme ve efektler.", "&eSol tık"]
+momentum = ["&6&lMomentum: {mode}&r", "&7Çarpan {value}. Çıkış hızının giriş hızından nasıl türetildiği.", "&eMod değiştirmek için sol tık", "&eÇarpanı ayarlamak için sağ tık"]
+orientation = ["&6&lYön: {mode}&r", "&7Yolcuların varışta baktığı yön.", "&eDeğiştirmek için sol tık"]
+membrane = ["&6&lZar: {state}&r", "&7Yalnızca ön taraf yolcuları içeri alır; arka taraf onları iter.", "&eAçıp kapatmak için sol tık"]
+bounce = ["&6&lSekme: {state}&r", "&7Yolcuları taşımak yerine geri sektir.", "&eAçıp kapatmak için sol tık"]
+profile = ["&6&lGeçiş efektleri&r", "&7Eşik {mode}", "&7Varış {state}", "&eSol tık: eşik efekti, Sağ tık: varış sesi", "&eShift + Sol tık: maske tikleri"]
+prompt = "&bYeni değeri sohbete yazın (veya '{cancel}'):"
+scale = ["&6&lYolcu ölçeği: {mode}&r", "&7Boyut aralığı {value}. Farklı boyuttaki portallar arasındaki yolculuğu eşler.", "&eModu değiştirmek için sol tık", "&eSağ tık: en az, Shift + sağ tık: en çok"]
+
+gravity = ["&6&lYer çekimi yönü: {state}&r", "&7Mod kullanan yolcuların zemini, hareketi ve modeli portalla birlikte döner.", "&eAçıp kapatmak için sol tıklayın"]
+
+[transit.scale]
+current = "&8[&6Wormholes&8] &f{portal}&7 yolcu ölçeği: &f{mode}&7 ({value})"
+set = "&8[&6Wormholes&8] &f{portal}&a yolcu ölçeği &f{mode}&a ({value}) olarak ayarlandı."
+invalid = "&8[&6Wormholes&8] &cYolcu ölçeği okunamadı: {reason}"
+reset = "&8[&6Wormholes&8] &a{count} varlığın normal boyutu geri yüklendi."
+reset_radius = "&8[&6Wormholes&8] &ctarget=all için 1 ile {value} arasında bir yarıçap gerekir."
+reset_player = "&8[&6Wormholes&8] &c{name} adında çevrimiçi oyuncu yok."
+
+[transit.gravity]
+current = "&8[&6Wormholes&8] &f{portal}&7 yer çekimi yönü: &f{state}"
+reset = "&8[&6Wormholes&8] &a{name} için normal yer çekimi geri yüklendi."
+client_required = "&8[&6Wormholes&8] &cBu portal, yer çekimi yönünü değiştirmek için Wormholes istemci modunu gerektirir."
+# ---- end lane:transit ----
+
+# ---- lane:view (fidelity.*) ----
+[fidelity.menu]
+entry = ["&b&lSadakat&r", "&7Bu portalın atmosferi, akustiği, ayrıntı düzeyi ve blok varlıkları.", "&eSol tık"]
+placard = ["&b&lProjeksiyon sadakati&r", "&7Projeksiyonun üzerine bindirilen portal başına kanallar."]
+atmosphere = "&bAtmosfer: &f{mode}"
+acoustics = "&bAkustik: &f{mode}"
+lod = "&bAyrıntı: &f{mode}"
+block_entities = "&bBlok varlıkları: &f{state}"
+hint = ["&8Değiştirmek için tıklayın.", "&8Shift + tık sunucu varsayılanını kullanır."]
+back = ["&e&lGeri&r", "&7Portal menüsüne dön."]
+default = "varsayılan"
+
+[fidelity.bedrock]
+profile = "{count} izleyici için Bedrock profili etkin"
+# ---- end lane:view ----
+
+# ---- lane:ops (ops.*) ----
+[ops.console]
+started = "Metrik ucu {value} adresinde dinliyor."
+no_token = "Metrik ucu baslamadi: [ops.console] token degerini ayarla."
+failed = "Metrik ucu {value} adresine baglanamadi: {reason}"
+
+[ops.webmap]
+published = "{name} uzerine {count} portal isareti yayimlandi."
+
+[ops.backup]
+created = "&8[&6Wormholes&8] &aYedek &f{id}&a su konuma yazildi: &f{path}&a."
+restored = "&8[&6Wormholes&8] &a&f{id}&a yedeginden &f{count}&a portal geri yuklendi."
+dry_run = "&8[&6Wormholes&8] &7Deneme: &f{count}&7 portal degisecekti."
+list_row = "&8[&6Wormholes&8] &f{id} &8| &f{count}&7 portal &8| &7{path}"
+list_empty = "&8[&6Wormholes&8] &f{path}&7 altinda yedek yok."
+not_found = "&8[&6Wormholes&8] &c&f{id}&c ile eslesen yedek yok."
+confirm_required = "&8[&6Wormholes&8] &cUygulamak icin komutu &fconfirm=true&c ile, plani gormek icin &fdry=true&c ile tekrar calistir."
+failed = "&8[&6Wormholes&8] &cYedekleme islemi basarisiz: &f{reason}"
+reload_required = "&8[&6Wormholes&8] &7Portal dosyalari degistirildi. Yuklemek icin &f/wormholes reload&7 calistir."
+signature_broken = "&8[&6Wormholes&8] &c&f{id}&c reddedildi: imza icerigiyle eslesmiyor."
+signature_untrusted = "&8[&6Wormholes&8] &c&f{id}&c reddedildi: &f{fingerprint}&c tarafindan imzalandi, bu sunucu ona guvenmiyor. Yine de uygulamak icin &fallow-unsigned=true&c ekle."
+signature_ok = "&8[&6Wormholes&8] &7&f{name}&7 (&f{fingerprint}&7) tarafindan imzalandi."
+
+[ops.import]
+report = "&8[&6Wormholes&8] &f{name}&7: &f{count}&7 portal alindi, &f{value}&7 atlandi."
+skipped_row = "&8[&6Wormholes&8] &7{portal}&8: &f{reason}"
+not_detected = "&8[&6Wormholes&8] &c&f{path}&c altinda {name} verisi bulunamadi."
+
+[ops.portals]
+row = "&8[&6Wormholes&8] &f{portal} &8| &7{world} &8| &7{state} &8| &7{destination}"
+page = "&8[&6Wormholes&8] &7Sayfa &f{page}&7/&f{pages}"
+empty = "&8[&6Wormholes&8] &7Bu filtrelerle eslesen portal yok."
+not_found = "&8[&6Wormholes&8] &c&f{name}&c ile eslesen portal yok."
+ambiguous = "&8[&6Wormholes&8] &c&f{name}&c ile {count} portal eslesiyor; kimligi kullan."
+info = ["&8[&6Wormholes&8] &7Portal &f{portal} &8| &7{id}", "&8[&6Wormholes&8] &7Dunya &f{world}&7, konum &f{value}", "&8[&6Wormholes&8] &7Durum &f{state}&7, hedef &f{destination}&7, sahip &f{owner}"]
+teleported = "&8[&6Wormholes&8] &a&f{portal}&a portalina isinlandin."
+teleport_unsafe = "&8[&6Wormholes&8] &e&f{portal}&e yakininda guvenli inis yok; portal merkezi kullaniliyor."
+retargeted = "&8[&6Wormholes&8] &a&f{portal}&a artik &f{destination}&a hedefini gosteriyor."
+unlinked = "&8[&6Wormholes&8] &a&f{portal}&a artik bagli degil."
+pruned = "&8[&6Wormholes&8] &a&f{count}&a sahipsiz bag temizlendi."
+prune_dry_run = "&8[&6Wormholes&8] &7Deneme: &f{count}&7 sahipsiz bag temizlenecekti."
+renamed_server = "&8[&6Wormholes&8] &a&f{count}&a gecit bagi &f{name}&a adindan &f{server}&a adina yeniden yazildi."
+
+[ops.command.help]
+backup = "Portal yedeklerini olustur, listele, geri yukle ve tasi"
+"backup.now" = "Portal verilerinin yedegini simdi yaz"
+"backup.list" = "Diskteki yedekleri listele"
+"backup.restore" = "Portal dosyalarini bir yedekten geri yukle (dry=true plani gosterir)"
+"backup.restore.id" = "/wormholes admin backup list komutundan alinan yedek kimligi"
+"backup.restore.dry" = "Hicbir sey yazmadan nelerin degisecegini bildir"
+"backup.restore.world_map" = "Dunya adi degisiklikleri eski=yeni,eski=yeni bicimiyle"
+"backup.restore.owner_map" = "Sahip degisiklikleri eski-uuid=yeni-uuid bicimiyle"
+"backup.restore.confirm" = "dry=false iken dosya yazmak icin gerekli"
+"backup.allow_unsigned" = "Guvenilen bir anahtarin imzalamadigi paketi uygula"
+"backup.export" = "Bir yedek paketini sunucular arasi tasinabilir bir dosyaya yaz"
+"backup.export.file" = "Hedef dosya; bos birakilirsa yedek klasorune yazar"
+"backup.import" = "Baska bir sunucudan disa aktarilmis paketi ice aktar"
+"backup.import.file" = "Okunacak paket dosyasi"
+"backup.import.dry" = "Hicbir sey yazmadan nelerin degisecegini bildir"
+"backup.import.world_map" = "Dunya adi degisiklikleri eski=yeni,eski=yeni bicimiyle"
+"backup.import.owner_map" = "Sahip degisiklikleri eski-uuid=yeni-uuid bicimiyle"
+"backup.import.confirm" = "dry=false iken dosya yazmak icin gerekli"
+"backup.import_from" = "Baska bir portal eklentisinin dosyalarindan portal ice aktar"
+"backup.import_from.source" = "stargate, advancedportals, multiverse, betterportals veya essentials"
+"backup.import_from.dry" = "Hicbir sey olusturmadan nelerin olusacagini bildir"
+"backup.import_from.frame" = "Cercevesi olmayan kaynaklar icin genislik,yukseklik bicimiyle cerceve boyutu"
+portals = "Portallari listele, incele ve toplu duzenle"
+"portals.list" = "Portallari istege bagli filtrelerle listele"
+"portals.list.world" = "Yalnizca bu dunyadaki portallar"
+"portals.list.type" = "Yalnizca bu turdeki portallar: portal, wormhole, gateway veya rtp"
+"portals.list.owner" = "Yalnizca bu oyuncu adina veya uuid degerine ait portallar"
+"portals.list.state" = "Yalnizca bu durumdaki portallar: open, closed, linked veya unlinked"
+"portals.list.page" = "Sayfa numarasi"
+"portals.find" = "Adinda bu metni gecen portallari bul"
+"portals.find.name" = "Aranacak metin"
+"portals.info" = "Bir portalin dunyasini, durumunu, hedefini ve sahibini goster"
+"portals.info.portal" = "Portal adi veya kimligi"
+"portals.tp" = "Bir portala guvenli zemine inerek isinlan"
+"portals.tp.portal" = "Portal adi veya kimligi"
+"portals.retarget" = "Bir portali baska bir yerel portala yonlendir"
+"portals.retarget.portal" = "Degistirilecek portalin adi veya kimligi"
+"portals.retarget.destination" = "Hedef portalin adi veya kimligi"
+"portals.unlink" = "Bir portalin hedefini kaldir"
+"portals.unlink.portal" = "Portal adi veya kimligi"
+"portals.prune" = "Hedefi artik var olmayan baglari kaldir"
+"portals.prune.dry" = "Hicbir seyi degistirmeden nelerin kaldirilacagini bildir"
+"portals.prune.confirm" = "dry=false iken kaldirmak icin gerekli"
+"portals.rename_server" = "Sunucular arasi baglari bir sunucu adindan digerine yeniden yaz"
+"portals.rename_server.old" = "Baglarda bugun kayitli olan sunucu adi"
+"portals.rename_server.new" = "Onun yerine kaydedilecek sunucu adi"
+"portals.rename_server.confirm" = "Baglari yeniden yazmak icin gerekli"
+"portals.shape" = "Bir portalin aciklik seklini goster veya ayarla"
+"portals.shape.portal" = "Portal adi veya kimligi"
+"portals.shape.shape" = "circle, flower(petals=7) veya full gibi sekil metni; bos birakilirsa gecerli sekil gosterilir"
+"portals.scale" = "Bir portalin yolcu olcegi kuralini goster veya ayarla"
+"portals.scale.portal" = "Portal adi veya id"
+"portals.scale.mode" = "off, motion veya ratio; deger verilmezse gecerli kural gosterilir"
+"portals.scale.min" = "Bir ratio gecisinin ulasabilecegi en kucuk boyut carpani (0.0625-16)"
+"portals.scale.max" = "Bir ratio gecisinin ulasabilecegi en buyuk boyut carpani (0.0625-16)"
+"scale" = "Portallarin olceklendirdigi yolcularin normal boyutunu geri yukle"
+"scale.reset" = "Portal olcegini bir oyuncudan veya yakindaki tum varliklardan kaldir"
+"scale.reset.target" = "self, bir oyuncu adi veya all"
+"scale.reset.radius" = "target=all icin blok cinsinden arama yaricapi (1-256)"
+# ---- end lane:ops ----
+
+# ---- lane:clientview (clientview.*) ----
+[clientview.command]
+header = "&6ClientView &7çalışma {state}, yapılandırma {mode}, {count} oturum"
+row = "&e{name} &7{state} &8| &7{value}"
+none = "&7Hiçbir oyuncunun ClientView oturumu yok."
+enabled = "&aClientView yeniden sunuluyor. Yapılandırma: {mode}."
+disabled = "&cClientView kapalı. Tüm oturumlar vanilla projeksiyona döndü."
+reset = "&a{name} için ClientView akışı yeniden başlatılıyor."
+no_session = "&c{name} için etkin bir ClientView oturumu yok."
+player_missing = "&c{name} adında çevrimiçi bir oyuncu yok."
+
+[clientview.command.help]
+clientview = "Wormholes modunu kullanan oyuncuların ClientView oturumları"
+status = "Tüm ClientView oturumlarını listele"
+on = "ClientView'i modlu istemcilere yeniden sun"
+off = "Tüm ClientView oyuncularını vanilla projeksiyona döndür"
+reset = "Bir oyuncunun ClientView akışını yeniden başlat"
+"reset.player" = "Çevrimiçi oyuncu adı"
+# ---- end lane:clientview ----

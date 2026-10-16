@@ -1,0 +1,117 @@
+package art.arcane.wormholes.modded.client;
+
+import art.arcane.wormholes.modded.MinecraftTestBase;
+import art.arcane.optics.math.Face;
+import art.arcane.optics.frame.OpticTransform;
+import art.arcane.optics.frame.AxisPermutation;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.culling.Frustum;
+import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
+import net.minecraft.client.renderer.entity.EntityRendererProvider;
+import net.minecraft.client.renderer.entity.state.EntityRenderState;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Leashable;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix4f;
+import org.junit.Test;
+import org.mockito.MockedStatic;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.function.Predicate;
+
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
+
+public class ClientMeshEntityVisibilityTest extends MinecraftTestBase {
+    @Test
+    public void destinationBoundsFollowSidewaysAndMirroredPortalTransforms() {
+        Frustum display = new Frustum(new Matrix4f(), new Matrix4f());
+        OpticTransform transform = OpticTransform.of(AxisPermutation.of(Face.U, Face.W, Face.S), 10, -20, 30);
+        Frustum destination = new ClientMeshEntities.DestinationFrustum(display, transform);
+        assertTrue(destination.isVisible(new AABB(19.75, 9.75, -30.25, 20.25, 10.25, -29.75)));
+        assertFalse(destination.isVisible(new AABB(19.75, 3.75, -30.25, 20.25, 4.25, -29.75)));
+        assertTrue(destination.isVisible(new AABB(Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY,
+            Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY)));
+        assertTrue(destination.isVisible(new AABB(Double.NaN, 0, 0, Double.NaN, 1, 1)));
+    }
+
+    @Test
+    public void vanillaRendererRetainsExtendedBoundsAndLeashesAcrossTheFrustum() {
+        EntityRenderDispatcher dispatcher = mock(EntityRenderDispatcher.class);
+        EntityRendererProvider.Context context = mock(EntityRendererProvider.Context.class);
+        when(context.getEntityRenderDispatcher()).thenReturn(dispatcher);
+        NativeCullingRenderer renderer = new NativeCullingRenderer(context);
+        Frustum display = new Frustum(new Matrix4f(), new Matrix4f());
+        Frustum destination = new ClientMeshEntities.DestinationFrustum(display, OpticTransform.IDENTITY);
+        Entity source = mock(Entity.class, withSettings().extraInterfaces(Leashable.class));
+        when(source.shouldRender(0, 0, 0)).thenReturn(true);
+        NativeCullingRenderer.bounds(source, new AABB(10, 0, 0, 11, 1, 1));
+        assertFalse(renderer.visible(source, destination));
+        Entity holder = mock(Entity.class);
+        when(((Leashable) source).getLeashHolder()).thenReturn(holder);
+        doReturn(renderer).when(dispatcher).getRenderer(holder);
+        NativeCullingRenderer.bounds(holder, new AABB(-11, 0, 0, -10, 1, 1));
+        assertTrue(renderer.visible(source, destination));
+        renderer.extend(new AABB(-1, -1, -1, 11, 1, 1));
+        when(((Leashable) source).getLeashHolder()).thenReturn(null);
+        assertTrue(renderer.visible(source, destination));
+    }
+
+    @Test
+    public void eachRenderCameraUsesItsOwnFrustumWithoutReducingProjectionDistance() {
+        ClientLevel level = mock(ClientLevel.class);
+        ClientMeshEntities features = new ClientMeshEntities(mock(ClientMeshSections.View.class), level);
+        Entity source = mock(Entity.class);
+        UUID id = UUID.randomUUID();
+        when(source.getUUID()).thenReturn(id);
+        when(level.entitiesForRendering()).thenReturn(List.of(source));
+        EntityRenderDispatcher dispatcher = mock(EntityRenderDispatcher.class);
+        EntityRenderState state = new EntityRenderState();
+        when(dispatcher.extractEntity(source, 0.5F)).thenReturn(state);
+        AABB bounds = new AABB(500, 20, 10, 501, 21, 11);
+        NativeCullingRenderer.answer(dispatcher, call -> ((Frustum) call.getArgument(1)).isVisible(bounds));
+        Minecraft minecraft = mock(Minecraft.class);
+        when(minecraft.getEntityRenderDispatcher()).thenReturn(dispatcher);
+        List<EntityRenderState> states = new ArrayList<>();
+        try (MockedStatic<Minecraft> runtime = mockStatic(Minecraft.class);
+             MockedStatic<ClientMeshEntities> ownership = mockStatic(ClientMeshEntities.class, CALLS_REAL_METHODS)) {
+            runtime.when(Minecraft::getInstance).thenReturn(minecraft);
+            ownership.when(() -> ClientMeshEntities.hiddenFromWorld(source)).thenReturn(false);
+            features.extractLocalEntities(Set.of(id), dispatcher, 0.5F, states);
+            Frustum main = new Frustum(new Matrix4f(), new Matrix4f());
+            CameraRenderState camera = new CameraRenderState();
+            camera.pos = Vec3.ZERO;
+            assertFalse(features.entityVisibility(camera, main, OpticTransform.IDENTITY).test(state));
+            Frustum shadow = new Frustum(new Matrix4f(), new Matrix4f());
+            shadow.prepare(500, 20, 10);
+            assertTrue(features.entityVisibility(camera, shadow, OpticTransform.IDENTITY).test(state));
+            NativeCullingRenderer.verifyCameras(dispatcher, source);
+            Predicate<EntityRenderState> visible = features.entityVisibility(camera, main, OpticTransform.IDENTITY);
+            NativeCullingRenderer.reject(dispatcher);
+            assertTrue(visible.test(state));
+            state.nameTag = Component.literal("Visible label");
+            assertTrue(visible.test(state));
+            state.nameTag = null;
+            state.scoreText = Component.literal("Visible score");
+            assertTrue(visible.test(state));
+            state.scoreText = null;
+            state.outlineColor = 0xFFFFFF;
+            assertTrue(visible.test(state));
+            assertTrue(visible.test(new EntityRenderState()));
+        }
+    }
+
+}

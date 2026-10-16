@@ -1,0 +1,524 @@
+import org.gradle.api.artifacts.Configuration
+import org.gradle.api.attributes.Attribute
+import org.gradle.api.tasks.Copy
+import org.gradle.api.tasks.WriteProperties
+import org.gradle.api.tasks.compile.JavaCompile
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+
+buildscript {
+    repositories {
+        mavenCentral()
+        maven { url = uri('https://jitpack.io') }
+    }
+    dependencies {
+        classpath('com.github.VolmitSoftware.VolmLib:packaging:master-SNAPSHOT')
+    }
+}
+
+plugins {
+    id 'java-library'
+    alias(libs.plugins.shadow)
+    alias(libs.plugins.slimjar)
+}
+
+apply plugin: 'art.arcane.volmit-packaging'
+
+group = 'art.arcane'
+version = providers.gradleProperty('wormholesVersion').get()
+apply from: file('gradle/multiplatform.gradle')
+Configuration nativeShrinkLibraryClasspath = configurations.create('nativeShrinkLibraries') {
+    canBeConsumed = false
+    canBeResolved = true
+    attributes.attribute(Attribute.of('art.arcane.volmlib.native.linkage', String), 'mapped-server')
+}
+def apiVersion = '26.1'
+def main = 'art.arcane.wormholes.Wormholes'
+def bootstrapper = 'art.arcane.wormholes.survival.doors.dimension.WormholesBootstrap'
+def lib = 'art.arcane.wormholes.libs'
+def spigotApiVersion = '26.2-R0.1-SNAPSHOT'
+String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate')
+    .orElse('com.github.VolmitSoftware:VolmLib:master-SNAPSHOT')
+    .get()
+String authTokenProperty = providers.gradleProperty('authToken').orNull
+String jitpackAuthToken = authTokenProperty ?: providers.gradleProperty('jitpackAuthToken').orNull
+List<String> languageLocales = fileTree('src/main/resources/languages') {
+    include('*.toml')
+}.files.collect { File source -> source.name.substring(0, source.name.length() - 5) }.sort()
+def languageSourceManifestTask = tasks.register('generateLanguageSourceManifest', WriteProperties) {
+    destinationFile.set(layout.buildDirectory.file('generated/language-source/wormholes-language-source.properties'))
+    property('revision', 'main')
+    property('locales', languageLocales.join(','))
+}
+
+def shadowJarTask = tasks.named('shadowJar', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar)
+apply from: 'gradle/runtime-test.gradle'
+apply from: 'gradle/packetevents-patch.gradle'
+apply from: 'gradle/fawe-patch.gradle'
+tasks.named('slimJar').get()
+
+tasks.register('buildPsychoLT') {
+    group = 'development'
+    description = 'Builds the CraftBukkit, Fabric, Forge, and NeoForge jars and deploys them to the managed Minecraft test-server dropins.'
+    dependsOn('buildAll')
+}
+
+tasks.register('buildSwiftSwamp', Copy) {
+    group = 'development'
+    description = 'Builds and deploys Wormholes to the local BUILDS output directory.'
+    outputs.upToDateWhen { false }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    dependsOn(tasks.named('check'), 'packedJar')
+    from({ tasks.named('packedJar').get().outputJar })
+    into(file('C://VolmitSoftware/BUILDS'))
+    rename { String ignored -> 'Wormholes.jar' }
+}
+
+tasks.named('jar').configure {
+    enabled = false
+}
+
+def apiJarTask = tasks.register('apiJar', Jar) {
+    group = 'build'
+    description = 'Packages only the public third-party API so other plugins can compile against it.'
+    archiveClassifier.set('api')
+    from(sourceSets.main.output) {
+        include 'art/arcane/wormholes/api/**'
+        exclude 'art/arcane/wormholes/api/**/internal/**'
+    }
+    from(project(':core').sourceSets.main.output) {
+        include 'art/arcane/wormholes/api/**'
+        exclude 'art/arcane/wormholes/api/**/internal/**'
+    }
+}
+
+tasks.named('build').configure {
+    dependsOn(shadowJarTask, apiJarTask)
+}
+
+shadowJarTask.configure {
+    exclude('com/fren_gor/**')
+    exclude('languages/**')
+    exclude { FileTreeElement entry ->
+        String nativePrefix = 'art/arcane/volmlib/nativelib/'
+        if (entry.isDirectory() || !entry.path.startsWith(nativePrefix)) {
+            return false
+        }
+        String relative = entry.path.substring(nativePrefix.length())
+        if (!relative.contains('/')) {
+            return false
+        }
+        List<String> segments = relative.tokenize('/')
+        String capability = segments[0] == 'common' || segments[0].startsWith('v') ? segments[1] : segments[0]
+        if (!['block', 'chunk', 'map', 'entity', 'item', 'environment', 'player'].contains(capability)) {
+            return true
+        }
+        if (capability == 'player') {
+            return !segments.last().startsWith('PlayerRespawnAccess')
+                    && !segments.last().startsWith('RespawnPoint')
+                    && !segments.last().startsWith('RespawnPolicy')
+        }
+        if (capability == 'entity') {
+            return !segments.last().startsWith('EntityVisibilityAccess')
+                    && !segments.last().startsWith('ReflectiveEntityVisibilityAccess')
+                    && !segments.last().startsWith('NativeEntityVisibilityAccess')
+                    && !segments.last().startsWith('EntityMetadataAccess')
+                    && !segments.last().startsWith('NativeEntityMetadataAccess')
+        }
+        return false
+    }
+    archiveClassifier.set('')
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    minimize {
+        exclude(dependency('com.github.VolmitSoftware.VolmLib:.*:.*'))
+        exclude(dependency('com.github.retrooper:packetevents-.*:.*'))
+    }
+    relocate('io.github.slimjar', "${lib}.slimjar")
+    relocate('org.bstats', "${lib}.bstats")
+    relocate('com.github.retrooper.packetevents', "${lib}.packetevents.api")
+    relocate('io.github.retrooper.packetevents', "${lib}.packetevents.impl")
+    relocate('com.electronwill.nightconfig', "${lib}.nightconfig")
+    relocate('com.moandjiezana.toml', "${lib}.toml4j")
+    relocate('net.kyori', "${lib}.kyori")
+    relocate('org.yaml.snakeyaml', "${lib}.snakeyaml")
+}
+
+tasks.named('processResources').configure {
+    exclude('languages/**')
+    from(languageSourceManifestTask)
+    def pluginProperties = [
+        name        : rootProject.name,
+        version     : project.version,
+        main        : main,
+        bootstrapper: bootstrapper,
+        apiVersion  : apiVersion,
+    ]
+
+    inputs.properties(pluginProperties)
+    filesMatching(['**/paper-plugin.yml', '**/plugin.yml']) {
+        expand(pluginProperties)
+    }
+}
+
+tasks.named('compileJava', JavaCompile).configure {
+    options.compilerArgs.add('-parameters')
+    options.encoding = 'UTF-8'
+    options.debugOptions.debugLevel = 'none'
+    options.release.set(25)
+}
+
+String runtimeJarTestFilter = 'art.arcane.wormholes.RuntimePlatformAbiTest'
+
+tasks.named('test').configure {
+    useJUnitPlatform()
+    maxParallelForks = Math.max(1, Runtime.runtime.availableProcessors().intdiv(2))
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    systemProperty('wormholes.projectVersion', project.version.toString())
+    filter {
+        excludeTestsMatching(runtimeJarTestFilter)
+    }
+}
+
+def runtimeJarTestTask = tasks.register('runtimeJarTest', Test) {
+    group = 'verification'
+    description = 'Runs the tests that inspect the shaded runtime jar.'
+    dependsOn(shadowJarTask)
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    systemProperty('wormholes.projectVersion', project.version.toString())
+    systemProperty('wormholes.runtimeJar', shadowJarTask.get().archiveFile.get().asFile.absolutePath)
+    inputs.file(shadowJarTask.flatMap { task -> task.archiveFile })
+        .withPropertyName('runtimeJar').withPathSensitivity(PathSensitivity.NONE)
+    filter {
+        includeTestsMatching(runtimeJarTestFilter)
+    }
+}
+
+tasks.named('check').configure {
+    dependsOn(runtimeJarTestTask)
+}
+
+File nodeExecutable = [providers.gradleProperty('nodeExecutable').orNull, providers.environmentVariable('NODE').orNull]
+    .findResult { String path -> path ? new File(path) : null } ?: {
+        String home = System.getProperty('user.home')
+        List<String> nvm = ((new File(home, '.nvm/versions/node').listFiles() ?: new File[0]) as List<File>)
+            .sort { File version -> version.name }.reverse().collect { File version -> new File(version, 'bin').path }
+        List<String> directories = (System.getenv('PATH') ?: '').tokenize(File.pathSeparator) +
+            ['/usr/local/bin', '/opt/homebrew/bin', "${home}/.local/bin".toString()] + nvm
+        directories.collect { String directory -> new File(directory, 'node') }.find { File candidate -> candidate.canExecute() }
+    }()
+
+def clientViewHarnessTestTask = tasks.register('clientViewHarnessTest', Exec) {
+    group = 'verification'
+    description = 'Runs the gameplay ClientView codec and harness tests against the Java golden vectors.'
+    File stamp = layout.buildDirectory.file('clientview-harness-test/passed').get().asFile
+    inputs.files(fileTree('src/test/gameplay/support') { include '*.mjs' })
+    inputs.files(fileTree('optics/src/test/resources/art/arcane/optics/stream/goldens'))
+    inputs.files(fileTree('core/src/test/resources/clientview'))
+    outputs.file(stamp)
+    workingDir(projectDir)
+    onlyIf('Node.js is installed') {
+        if (nodeExecutable == null) {
+            logger.warn('clientViewHarnessTest skipped: node was not found on PATH or in /usr/local/bin, /opt/homebrew/bin, ~/.local/bin or ~/.nvm; set -PnodeExecutable=<path>')
+        }
+        nodeExecutable != null
+    }
+    commandLine(nodeExecutable?.absolutePath ?: 'node', '--test', 'src/test/gameplay/support/*.test.mjs')
+    doLast {
+        stamp.parentFile.mkdirs()
+        stamp.text = 'passed\n'
+    }
+}
+
+tasks.named('check').configure {
+    dependsOn(clientViewHarnessTestTask)
+}
+
+configurations {
+    spigotCompatibility
+}
+
+tasks.register('compileSpigotCompatibility', JavaCompile) {
+    dependsOn(':core:classes', ':optics:classes')
+    source = fileTree('src/main/java') {
+        exclude '**/WormholesBootstrap.java'
+        exclude '**/PaperCommandRegistrar.java'
+        exclude '**/PaperLivingEntityMoveListener.java'
+        exclude '**/PaperAsyncChatListener.java'
+        exclude '**/ProjectionTickHeadroomListener.java'
+        exclude '**/PaperClientViewConfigureListener.java'
+    }
+    classpath = files(sourceSets.main.compileClasspath.filter { File dependency ->
+        !dependency.name.startsWith('paper-api-')
+    }) + configurations.spigotCompatibility
+    destinationDirectory.set(layout.buildDirectory.dir('classes/java/spigotCompatibility'))
+    options.compilerArgs.add('-parameters')
+    options.encoding = 'UTF-8'
+    options.debugOptions.debugLevel = 'none'
+    options.release.set(25)
+}
+
+gradle.includedBuilds.find { includedBuild -> includedBuild.name == 'VolmLib' }?.with { includedBuild ->
+    File spigotClasses = new File(includedBuild.projectDir, 'shared/build/classes/java/spigotCompatibility')
+    tasks.named('compileSpigotCompatibility').configure {
+        dependsOn(includedBuild.task(':shared:compileSpigotCompatibility'))
+        classpath = files(spigotClasses) + classpath
+    }
+}
+
+tasks.named('check').configure {
+    dependsOn(tasks.named('compileSpigotCompatibility'))
+}
+
+tasks.register('bandwidthHarness', JavaExec) {
+    group = 'verification'
+    description = 'Runs the Wormholes bandwidth comparison harness across entity, transport, and replication scenarios.'
+    dependsOn(tasks.named('testClasses'))
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'art.arcane.wormholes.perf.WormholesBandwidthHarness'
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    systemProperties = System.properties.findAll {
+        String key = it.key.toString()
+        return key.startsWith('scenarios') || key.startsWith('duration') || key.startsWith('subscribers') || key.startsWith('chunks') || key.startsWith('activity')
+    }
+}
+
+slimJar {
+    relocate('org.bstats', "${lib}.bstats")
+    relocate('com.electronwill.nightconfig', "${lib}.nightconfig")
+    relocate('com.moandjiezana.toml', "${lib}.toml4j")
+    relocate('net.kyori', "${lib}.kyori")
+    relocate('org.yaml.snakeyaml', "${lib}.snakeyaml")
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven {
+        url = uri('https://repo.papermc.io/repository/maven-public/')
+    }
+    maven {
+        url = uri('https://hub.spigotmc.org/nexus/content/repositories/snapshots/')
+    }
+    maven {
+        url = uri('https://repo.extendedclip.com/content/repositories/placeholderapi/')
+    }
+    maven {
+        url = uri('https://repo.codemc.io/repository/maven-releases/')
+    }
+    maven {
+        url = uri('https://repo.codemc.io/repository/maven-snapshots/')
+    }
+    maven {
+        url = uri('https://maven.citizensnpcs.co/repo')
+    }
+    maven {
+        url = uri('https://jitpack.io')
+        if (jitpackAuthToken != null) {
+            credentials {
+                username = jitpackAuthToken
+                password = '.'
+            }
+        }
+    }
+}
+
+dependencies {
+    implementation(project(':core')) {
+        transitive = false
+    }
+    implementation(project(':optics')) {
+        transitive = false
+    }
+    implementation('org.yaml:snakeyaml:2.7')
+    implementation('de.crazydev22.slimjar.helper:spigot:2.1.9')
+    compileOnly('com.github.luben:zstd-jni:1.5.7-11')
+    compileOnly('me.clip:placeholderapi:2.11.6') { transitive = false }
+    compileOnly('com.github.MilkBowl:VaultAPI:1.7') { transitive = false }
+    compileOnly('net.citizensnpcs:citizensapi:2.0.43-SNAPSHOT') { transitive = false }
+    compileOnly(libs.paper)
+    compileOnly(libs.fastutil)
+    spigotCompatibility("org.spigotmc:spigot-api:${spigotApiVersion}")
+    testImplementation('me.clip:placeholderapi:2.11.6') { transitive = false }
+    testImplementation('com.github.MilkBowl:VaultAPI:1.7') { transitive = false }
+    testImplementation('net.citizensnpcs:citizensapi:2.0.43-SNAPSHOT') { transitive = false }
+    testRuntimeOnly('com.fastasyncworldedit:FastAsyncWorldEdit-Libs-Core:2.16.1') { transitive = false }
+    testRuntimeOnly('org.apache.logging.log4j:log4j-api:2.17.1')
+    testImplementation(libs.paper)
+    testImplementation(libs.fastutil)
+    testImplementation('com.github.luben:zstd-jni:1.5.7-11')
+    testImplementation('io.netty:netty-buffer:4.2.15.Final')
+    testImplementation('io.netty:netty-transport:4.2.15.Final')
+    testImplementation(libs.junitJupiter)
+    testImplementation('org.mockito:mockito-core:5.23.0')
+    testRuntimeOnly(libs.junitPlatformLauncher)
+    implementation("com.github.VolmitSoftware.VolmLib:native-api:${volmLibCoordinate.tokenize(':').last()}")
+    implementation("com.github.VolmitSoftware.VolmLib:native-common:${volmLibCoordinate.tokenize(':').last()}")
+    implementation("com.github.VolmitSoftware.VolmLib:native-v26_2_R1:${volmLibCoordinate.tokenize(':').last()}")
+    implementation("com.github.VolmitSoftware.VolmLib:native-v26_3_R1:${volmLibCoordinate.tokenize(':').last()}")
+    nativeShrinkLibraries("com.github.VolmitSoftware.VolmLib:native-v26_2_R1:${volmLibCoordinate.tokenize(':').last()}")
+    nativeShrinkLibraries("com.github.VolmitSoftware.VolmLib:native-v26_3_R1:${volmLibCoordinate.tokenize(':').last()}")
+    implementation("com.github.VolmitSoftware.VolmLib:volmlib-localization:${volmLibCoordinate.tokenize(':').last()}") {
+        transitive = false
+    }
+    implementation("com.github.VolmitSoftware.VolmLib:volmlib-web:${volmLibCoordinate.tokenize(':').last()}") {
+        transitive = false
+    }
+    implementation(volmLibCoordinate) {
+        changing = true
+        transitive = false
+    }
+    implementation(project(':wormholes-proxy-protocol'))
+    implementation(libs.packetevents) {
+        exclude(group: 'net.kyori')
+    }
+    slim(libs.bstats)
+    slim('com.github.luben:zstd-jni:1.5.7-11')
+    slim(libs.nightConfigToml)
+    slim(libs.toml4j)
+    slim(libs.adventureApi)
+    slim(libs.adventureNbt)
+    slim(libs.adventureMiniMessage)
+    slim(libs.adventureSerializerGson)
+    slim(libs.adventureSerializerJson)
+    slim(libs.adventureSerializerLegacy)
+    slim(libs.adventureSerializerPlain)
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+allprojects {
+    configurations.configureEach {
+        resolutionStrategy.eachDependency { details ->
+            if (details.requested.group == 'com.github.retrooper' && details.requested.name.startsWith('packetevents-')) {
+                details.useVersion(libs.versions.packetevents.get())
+            }
+        }
+    }
+}
+
+configurations.configureEach {
+    resolutionStrategy.cacheChangingModulesFor(0, 'seconds')
+    resolutionStrategy.cacheDynamicVersionsFor(0, 'seconds')
+}
+
+if (!JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_25)) {
+    System.err.println()
+    System.err.println('=========================================================================================================')
+    System.err.println('You must run gradle on Java 25 or newer. You are using ' + JavaVersion.current())
+    System.err.println()
+    System.err.println('=== For IDEs ===')
+    System.err.println('1. Configure the project for Java 25')
+    System.err.println('2. Configure the bundled gradle to use Java 25 in settings')
+    System.err.println()
+    System.err.println('=== For Command Line (gradlew) ===')
+    System.err.println('1. Install JDK 25 from https://adoptium.net/temurin/releases/?version=25')
+    System.err.println('2. Set JAVA_HOME environment variable to the new jdk installation folder')
+    System.err.println('3. Open a new command prompt window to get the new environment variables if need be.')
+    System.err.println('=========================================================================================================')
+    System.err.println()
+    System.exit(69)
+}
+
+
+tasks.register('verifyLanguagePackaging') {
+    dependsOn(shadowJarTask)
+    inputs.file(shadowJarTask.flatMap { it.archiveFile })
+    doLast {
+        File artifact = shadowJarTask.get().archiveFile.get().asFile
+        new java.util.jar.JarFile(artifact).withCloseable { java.util.jar.JarFile archive ->
+            List<String> translations = archive.entries().findAll { java.util.jar.JarEntry entry ->
+                !entry.directory && entry.name.startsWith('languages/')
+            }.collect { java.util.jar.JarEntry entry -> entry.name }
+            if (!translations.isEmpty()) {
+                throw new GradleException("Runtime jar contains translation resources: ${translations}")
+            }
+        }
+    }
+}
+
+tasks.register('verifyPacketEventsPackaging') {
+    dependsOn(shadowJarTask)
+    inputs.file(shadowJarTask.flatMap { it.archiveFile })
+    doLast {
+        File artifact = shadowJarTask.get().archiveFile.get().asFile
+        new java.util.jar.JarFile(artifact).withCloseable { java.util.jar.JarFile archive ->
+            for (String entry : ['api/PacketEvents.class', 'api/protocol/player/ClientVersion.class',
+                                 'impl/factory/spigot/SpigotPacketEventsBuilder.class',
+                                 'impl/impl/netty/channel/ChannelOperatorImpl.class']) {
+                if (archive.getJarEntry("art/arcane/wormholes/libs/packetevents/${entry}") == null) {
+                    throw new GradleException("Wormholes must bundle PacketEvents: ${entry}")
+                }
+            }
+            for (String mapping : ['assets/mappings/data/block_state/V_26_1.nbt', 'assets/mappings/data/block_state/V_26_2.nbt',
+                                   'assets/mappings/data/block_state/V_26_3.nbt', 'assets/mappings/registries/item.nbt']) {
+                if (archive.getJarEntry(mapping) == null) {
+                    throw new GradleException("Wormholes must bundle PacketEvents mappings: ${mapping}")
+                }
+            }
+            for (String entry : ['api/event/PacketSendEvent.class', 'impl/injector/handlers/PacketEventsEncoder.class']) {
+                def patchedEntry = archive.getJarEntry("art/arcane/wormholes/libs/packetevents/${entry}")
+                if (patchedEntry == null) {
+                    throw new GradleException("Wormholes must bundle patched PacketEvents: ${entry}")
+                }
+                String bytecode = new String(archive.getInputStream(patchedEntry).readAllBytes(), java.nio.charset.StandardCharsets.ISO_8859_1)
+                if (!bytecode.contains('getTasksOnWriteCompletion') || !bytecode.contains('hasTasksOnWriteCompletion')) {
+                    throw new GradleException("Wormholes must bundle PacketEvents write completion support: ${entry}")
+                }
+            }
+            for (String manifest : ['slimjar.dat', 'slimjar-resolutions.dat']) {
+                String contents = new String(archive.getInputStream(archive.getJarEntry(manifest)).readAllBytes(), java.nio.charset.StandardCharsets.ISO_8859_1)
+                if (contents.contains('com.github.retrooper')) {
+                    throw new GradleException("Wormholes must not download PacketEvents at runtime: ${manifest}")
+                }
+            }
+        }
+    }
+}
+
+tasks.named('check').configure {
+    dependsOn(tasks.named('verifyLanguagePackaging'), tasks.named('verifyPacketEventsPackaging'))
+}
+
+pluginPackaging {
+    artifacts {
+        create('distribution') {
+            packed = true
+            taskName = 'shadowJar'
+            policyName = 'Wormholes'
+            requiredEntries = requiredEntries + [
+                'art/arcane/volmlib/nativelib/chunk/ChunkPacketAccess.class',
+                'art/arcane/volmlib/nativelib/chunk/ChunkPosition.class',
+                'art/arcane/volmlib/nativelib/chunk/ChunkPacketSnapshot.class',
+                'art/arcane/volmlib/nativelib/chunk/ChunkWorldContext.class',
+                'art/arcane/volmlib/nativelib/entity/EntityMetadataAccess.class',
+                'art/arcane/volmlib/nativelib/common/entity/NativeEntityMetadataAccess.class',
+                'art/arcane/volmlib/nativelib/v26_2_R1/entity/NativeEntityMetadataAccess.class',
+                'art/arcane/volmlib/nativelib/v26_3_R1/entity/NativeEntityMetadataAccess.class',
+                'art/arcane/volmlib/nativelib/environment/WorldEnvironmentAccess.class',
+                'art/arcane/volmlib/nativelib/environment/WorldEnvironmentAccess$Position.class',
+                'art/arcane/volmlib/nativelib/environment/WorldEnvironment.class',
+                'art/arcane/volmlib/nativelib/environment/WorldEnvironment$EyeMedium.class',
+                'art/arcane/volmlib/nativelib/v26_2_R1/environment/NativeWorldEnvironmentAccess.class',
+                'art/arcane/volmlib/nativelib/v26_3_R1/environment/NativeWorldEnvironmentAccess.class'
+            ]
+            prunePrefixes = ['art/arcane/volmlib/']
+            keepPrefixes = ['art/arcane/volmlib/util/matter/slices/', 'art/arcane/volmlib/nativelib/']
+            shrinkRules = [file('packaging/shrink.pro')]
+            shrinkLibraries.from(nativeShrinkLibraryClasspath)
+            shrinkRelocations = [
+                'org.bstats'                       : "${lib}.bstats",
+                'com.github.retrooper.packetevents': "${lib}.packetevents.api",
+                'io.github.retrooper.packetevents' : "${lib}.packetevents.impl",
+                'com.electronwill.nightconfig'     : "${lib}.nightconfig",
+                'com.moandjiezana.toml'            : "${lib}.toml4j",
+                'net.kyori'                        : "${lib}.kyori"
+            ]
+        }
+    }
+}

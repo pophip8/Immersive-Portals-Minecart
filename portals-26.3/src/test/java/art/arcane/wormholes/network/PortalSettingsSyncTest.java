@@ -1,0 +1,504 @@
+package art.arcane.wormholes.network;
+
+import art.arcane.wormholes.portal.ILocalPortal;
+
+import com.github.retrooper.packetevents.protocol.player.ClientVersion;
+import art.arcane.wormholes.util.BukkitJsonDocuments;
+import art.arcane.wormholes.PortalManager;
+import art.arcane.wormholes.Wormholes;
+import art.arcane.wormholes.config.toml.NetworkConfig;
+import art.arcane.wormholes.portal.AmbientParticleStyle;
+import art.arcane.wormholes.portal.BlackoutColor;
+import art.arcane.wormholes.portal.DimensionalPortalKind;
+import art.arcane.wormholes.portal.LocalPortal;
+import art.arcane.optics.frame.QuarterTurn;
+import art.arcane.wormholes.portal.PortalPermissionMode;
+import art.arcane.wormholes.portal.PortalStructure;
+import art.arcane.wormholes.portal.PortalType;
+import art.arcane.wormholes.portal.ProjectionMode;
+import art.arcane.wormholes.portal.ProjectionRenderMode;
+import art.arcane.wormholes.portal.RemotePortal;
+import art.arcane.wormholes.portal.vanilla.PortalFactory;
+import art.arcane.wormholes.util.Cuboid;
+import org.bukkit.NamespacedKey;
+import org.bukkit.World;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.lang.reflect.Proxy;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.logging.Logger;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class PortalSettingsSyncTest {
+    // Wire key retired with the per-portal surface thickness knob; older peers still send it.
+    private static final String LEGACY_KEY_SURFACE_THICKNESS = "surfaceThickness";
+
+    @Test
+    void productionSettingsKeepProjectionAndMirrorIndependent() {
+        LocalPortal portal = localPortal();
+        portal.setProjectionMode(ProjectionMode.OFF);
+        portal.setMirrorMode(true);
+
+        Map<String, String> settings = PortalSettingsCodec.collectSettings(portal);
+
+        assertEquals("MIRROR", settings.get(PortalSettingsCodec.KEY_PROJECTION_MODE));
+        assertEquals("false", settings.get(PortalSettingsCodec.KEY_PROJECTION_ENABLED));
+        assertEquals("true", settings.get(PortalSettingsCodec.KEY_MIRROR_MODE));
+    }
+
+    @Test
+    void legacyMirrorSentinelNormalizesToSafeMirrorState() {
+        RemotePortal remote = newRemotePortal("alpha", UUID.randomUUID());
+        remote.setMirroredProjectionMode(ProjectionMode.OFF);
+
+        PortalSettingsCodec.applyToRemote(remote, Map.of(PortalSettingsCodec.KEY_PROJECTION_MODE, "MIRROR"));
+
+        assertEquals(ProjectionMode.ON, remote.getMirroredProjectionMode());
+        assertTrue(remote.isMirroredMirrorMode());
+        assertFalse(remote.acceptsInboundTraversal());
+    }
+
+    @Test
+    void explicitProjectionEnabledPreservesMirrorWithProjectionOff() {
+        RemotePortal remote = newRemotePortal("alpha", UUID.randomUUID());
+        Map<String, String> settings = new LinkedHashMap<>();
+        settings.put(PortalSettingsCodec.KEY_PROJECTION_MODE, "MIRROR");
+        settings.put(PortalSettingsCodec.KEY_PROJECTION_ENABLED, "false");
+        settings.put(PortalSettingsCodec.KEY_MIRROR_MODE, "true");
+
+        PortalSettingsCodec.applyToRemote(remote, settings);
+
+        assertEquals(ProjectionMode.OFF, remote.getMirroredProjectionMode());
+        assertTrue(remote.isMirroredMirrorMode());
+        assertFalse(remote.acceptsInboundTraversal());
+    }
+
+    @Test
+    void explicitProjectionEnabledAppliesIndependentStateToLinkedLocalPortal() {
+        LocalPortal portal = localPortal();
+        Map<String, String> settings = new LinkedHashMap<>();
+        settings.put(PortalSettingsCodec.KEY_PROJECTION_MODE, "MIRROR");
+        settings.put(PortalSettingsCodec.KEY_PROJECTION_ENABLED, "false");
+        settings.put(PortalSettingsCodec.KEY_MIRROR_MODE, "true");
+
+        PortalSettingsCodec.applyToLocal(portal, settings);
+
+        assertEquals(ProjectionMode.OFF, portal.getProjectionMode());
+        assertTrue(portal.isMirrorMode());
+    }
+
+    @Test
+    void endArrivalNeverOverwritesItsVisibleSourceSettings() {
+        World world = world();
+        LocalPortal source = localPortal(world);
+        LocalPortal arrival = localPortal(world);
+        source.setDimensionalPortalKind(DimensionalPortalKind.END_SOURCE);
+        arrival.setDimensionalPortalKind(DimensionalPortalKind.END_ARRIVAL);
+        assertTrue(PortalFactory.linkOneWay(source, arrival));
+        source.setAmbientColor(0x123456);
+
+        PortalSyncService<ILocalPortal> sync = BukkitPortalSyncAccess.create(null, () -> List.of(source, arrival), Runnable::run);
+        sync.syncLinkedLocals(arrival);
+
+        assertEquals(ProjectionMode.ON, source.getProjectionMode());
+        assertEquals(0x123456, source.getAmbientColor());
+        assertEquals(ProjectionMode.OFF, arrival.getProjectionMode());
+    }
+
+    @Test
+    void mirrorToggleBroadcastsRemoteCacheWhenSettingsSyncIsDisabled(@TempDir Path tempDir) {
+        PortalSyncService<ILocalPortal> previousSync = Wormholes.portalSyncService;
+        LocalPortal portal = localPortal();
+        Wormholes.portalSyncService = null;
+        portal.setSettingsSyncEnabled(false);
+        RecordingNetworkManager network = new RecordingNetworkManager(tempDir);
+        PortalSyncService<ILocalPortal> sync = BukkitPortalSyncAccess.create(network, () -> List.of(portal), Runnable::run);
+        try {
+            Wormholes.portalSyncService = sync;
+
+            portal.setMirrorMode(true);
+
+            WireMessage.PortalSettingsUpdate enabled = assertInstanceOf(
+                WireMessage.PortalSettingsUpdate.class, network.singleMessage());
+            assertEquals("true", enabled.settings().get(PortalSettingsCodec.KEY_REMOTE_CACHE_ONLY));
+            assertEquals("MIRROR", enabled.settings().get(PortalSettingsCodec.KEY_PROJECTION_MODE));
+            assertEquals("true", enabled.settings().get(PortalSettingsCodec.KEY_MIRROR_MODE));
+
+            network.clear();
+            portal.setMirrorMode(false);
+
+            WireMessage.PortalSettingsUpdate disabled = assertInstanceOf(
+                WireMessage.PortalSettingsUpdate.class, network.singleMessage());
+            assertEquals("true", disabled.settings().get(PortalSettingsCodec.KEY_REMOTE_CACHE_ONLY));
+            assertEquals("ON", disabled.settings().get(PortalSettingsCodec.KEY_PROJECTION_MODE));
+            assertEquals("false", disabled.settings().get(PortalSettingsCodec.KEY_MIRROR_MODE));
+        } finally {
+            Wormholes.portalSyncService = previousSync;
+        }
+    }
+
+    private static RemotePortal newRemotePortal(String peer, UUID id) {
+        return RemotePortal.fromInfo(peer, portalInfo(id, true));
+    }
+
+    private static PortalInfo portalInfo(UUID id, boolean open) {
+        return new PortalInfo(id, "Remote Gate", "world", PortalType.GATEWAY.name(), open,
+            "E", "S", "U",
+            100.0D, 64.0D, 100.0D,
+            99.0D, 63.0D, 99.0D,
+            101.0D, 65.0D, 101.0D);
+    }
+
+    private static LocalPortal localPortal() {
+        Map<String, Object> values = new HashMap<String, Object>();
+        values.put("worldKey", "minecraft:overworld");
+        values.put("x1", Integer.valueOf(0));
+        values.put("y1", Integer.valueOf(64));
+        values.put("z1", Integer.valueOf(0));
+        values.put("x2", Integer.valueOf(0));
+        values.put("y2", Integer.valueOf(66));
+        values.put("z2", Integer.valueOf(2));
+        PortalStructure structure = new PortalStructure();
+        structure.setArea(new Cuboid(values));
+        return new LocalPortal(UUID.randomUUID(), PortalType.GATEWAY, structure);
+    }
+
+    private static LocalPortal localPortal(World world) {
+        LocalPortal portal = localPortal();
+        portal.getStructure().setWorld(world);
+        return portal;
+    }
+
+    private static World world() {
+        return (World) Proxy.newProxyInstance(World.class.getClassLoader(), new Class<?>[] { World.class },
+            (proxy, method, arguments) -> switch (method.getName()) {
+                case "getName" -> "world";
+                case "getKey" -> NamespacedKey.minecraft("overworld");
+                case "toString" -> "PortalSettingsSyncTestWorld";
+                case "hashCode" -> Integer.valueOf(System.identityHashCode(proxy));
+                case "equals" -> Boolean.valueOf(proxy == arguments[0]);
+                default -> throw new UnsupportedOperationException(method.getName());
+            });
+    }
+
+    @Test
+    void wireUpdateAppliesKnownKeysToRemoteMirror() {
+        RemotePortal remote = newRemotePortal("alpha", UUID.randomUUID());
+        Map<String, String> settings = new LinkedHashMap<>();
+        settings.put(PortalSettingsCodec.KEY_PROJECTION_MODE, "OFF");
+        settings.put(PortalSettingsCodec.KEY_MIRROR_MODE, "true");
+        settings.put(PortalSettingsCodec.KEY_MIRROR_ROTATION, "270");
+        settings.put(PortalSettingsCodec.KEY_PERMISSION_MODE, "WHITELIST");
+        settings.put(PortalSettingsCodec.KEY_OUTGOING_TRAVERSALS, "false");
+        settings.put(PortalSettingsCodec.KEY_INCOMING_TRAVERSALS, "false");
+        settings.put(PortalSettingsCodec.KEY_VIEW_DEPTH, "24");
+        settings.put(PortalSettingsCodec.KEY_VIEW_LATERAL_PAD, "12");
+        settings.put(PortalSettingsCodec.KEY_VIEW_HEARTBEAT, "40");
+        settings.put(PortalSettingsCodec.KEY_VIEW_ENTITY_INTERVAL, "8");
+        settings.put(PortalSettingsCodec.KEY_VIEW_UNSUBSCRIBE_GRACE, "45");
+        settings.put(PortalSettingsCodec.KEY_VIEW_FALLBACK_BLOCK, "minecraft:stone");
+        settings.put(PortalSettingsCodec.KEY_BLACKOUT_BACKGROUND, "false");
+        settings.put(PortalSettingsCodec.KEY_BLACKOUT_COLOR, "RED");
+        settings.put(PortalSettingsCodec.KEY_ACTIVATION_RANGE, "96");
+        settings.put(PortalSettingsCodec.KEY_RENDER_MODE, "VENTICULAR");
+        settings.put(PortalSettingsCodec.KEY_AMBIENT_STYLE, "OUTLINE");
+        settings.put(PortalSettingsCodec.KEY_AMBIENT_COLOR, Integer.toString(0x123456));
+        settings.put(PortalSettingsCodec.KEY_SURFACE_SKIN, "minecraft:glass");
+
+        PortalSettingsCodec.applyToRemote(remote, settings);
+
+        assertEquals(ProjectionMode.OFF, remote.getMirroredProjectionMode());
+        assertTrue(remote.isMirroredMirrorMode());
+        assertEquals(QuarterTurn.DEGREES_270, remote.getMirroredProjectionRotation());
+        assertEquals(PortalPermissionMode.WHITELIST, remote.getMirroredPermissionMode());
+        assertFalse(remote.isMirroredOutgoingTraversalsEnabled());
+        assertFalse(remote.isMirroredIncomingTraversalsEnabled());
+        assertEquals(24, remote.getMirroredNetworkViewDepth());
+        assertEquals(12, remote.getMirroredNetworkViewLateralPad());
+        assertEquals(40, remote.getMirroredNetworkViewHeartbeatTicks());
+        assertEquals(8, remote.getMirroredNetworkViewEntityIntervalTicks());
+        assertEquals(45, remote.getMirroredNetworkViewUnsubscribeGraceSeconds());
+        assertEquals("minecraft:stone", remote.getMirroredNetworkViewFallbackBlock());
+        assertFalse(remote.isMirroredBlackoutBackground());
+        assertEquals(BlackoutColor.RED, remote.getMirroredBlackoutColor());
+        assertEquals(96, remote.getMirroredActivationRange());
+        assertEquals(ProjectionRenderMode.VENTICULAR, remote.getMirroredRenderMode());
+        assertEquals(AmbientParticleStyle.OUTLINE, remote.getMirroredAmbientStyle());
+        assertEquals(0x123456, remote.getMirroredAmbientColor());
+        assertEquals("minecraft:glass", remote.getMirroredSurfaceSkin());
+    }
+
+    @Test
+    void wireUpdateIgnoresUnknownKeysAndRemovedProjectionModes() {
+        RemotePortal remote = newRemotePortal("alpha", UUID.randomUUID());
+        remote.setMirroredProjectionMode(ProjectionMode.OFF);
+        int originalDepth = remote.getMirroredNetworkViewDepth();
+        ProjectionMode originalMode = remote.getMirroredProjectionMode();
+        Map<String, String> settings = new LinkedHashMap<>();
+        settings.put("unknownKey1", "garbage");
+        settings.put("anotherFutureField", "1234");
+        settings.put(PortalSettingsCodec.KEY_PROJECTION_MODE, "ONE_WAY");
+
+        PortalSettingsCodec.applyToRemote(remote, settings);
+
+        assertEquals(originalMode, remote.getMirroredProjectionMode());
+        assertEquals(originalDepth, remote.getMirroredNetworkViewDepth());
+    }
+
+    @Test
+    void collectSettingsIncludesBlackoutAndActivationRange() {
+        LocalPortal portal = localPortal();
+        portal.setBlackoutBackground(false);
+        portal.setBlackoutColor(BlackoutColor.RED);
+        portal.setActivationRange(96);
+
+        Map<String, String> settings = PortalSettingsCodec.collectSettings(portal);
+
+        assertEquals("false", settings.get(PortalSettingsCodec.KEY_BLACKOUT_BACKGROUND));
+        assertEquals("RED", settings.get(PortalSettingsCodec.KEY_BLACKOUT_COLOR));
+        assertEquals("96", settings.get(PortalSettingsCodec.KEY_ACTIVATION_RANGE));
+    }
+
+    @Test
+    void applyToLocalAppliesBlackoutAndActivationRangeWithSafeParsing() {
+        LocalPortal portal = localPortal();
+        Map<String, String> valid = new LinkedHashMap<>();
+        valid.put(PortalSettingsCodec.KEY_BLACKOUT_BACKGROUND, "false");
+        valid.put(PortalSettingsCodec.KEY_BLACKOUT_COLOR, "RED");
+        valid.put(PortalSettingsCodec.KEY_ACTIVATION_RANGE, "96");
+
+        PortalSettingsCodec.applyToLocal(portal, valid);
+
+        assertFalse(portal.isBlackoutBackground());
+        assertEquals(BlackoutColor.RED, portal.getBlackoutColor());
+        assertEquals(96, portal.getActivationRange());
+
+        Map<String, String> malformed = new LinkedHashMap<>();
+        malformed.put(PortalSettingsCodec.KEY_BLACKOUT_COLOR, "NOT_A_COLOR");
+        malformed.put(PortalSettingsCodec.KEY_ACTIVATION_RANGE, "abc");
+
+        PortalSettingsCodec.applyToLocal(portal, malformed);
+
+        assertEquals(BlackoutColor.RED, portal.getBlackoutColor());
+        assertEquals(96, portal.getActivationRange());
+    }
+
+    @Test
+    void directoryRefreshCarriesMirroredBlackoutAndActivation() {
+        RemotePortalRegistry registry = new RemotePortalRegistry();
+        UUID portalId = UUID.randomUUID();
+        registry.applyUpsert("alpha", portalInfo(portalId, true));
+        RemotePortal remote = registry.get("alpha", portalId);
+        remote.setMirroredBlackoutBackground(false);
+        remote.setMirroredBlackoutColor(BlackoutColor.RED);
+        remote.setMirroredActivationRange(96);
+
+        registry.applyDirectory("alpha", List.of(portalInfo(portalId, true)));
+
+        RemotePortal refreshed = registry.get("alpha", portalId);
+        assertNotNull(refreshed);
+        assertFalse(refreshed.isMirroredBlackoutBackground());
+        assertEquals(BlackoutColor.RED, refreshed.getMirroredBlackoutColor());
+        assertEquals(96, refreshed.getMirroredActivationRange());
+    }
+
+    @Test
+    void collectSettingsIncludesCosmetics() {
+        LocalPortal portal = localPortal();
+        portal.setAmbientStyle(AmbientParticleStyle.CORNERS);
+        portal.setAmbientColor(0x00FF00);
+        portal.setSurfaceSkin("minecraft:glass");
+
+        Map<String, String> settings = PortalSettingsCodec.collectSettings(portal);
+
+        assertEquals("CORNERS", settings.get(PortalSettingsCodec.KEY_AMBIENT_STYLE));
+        assertEquals(Integer.toString(0x00FF00), settings.get(PortalSettingsCodec.KEY_AMBIENT_COLOR));
+        assertEquals("minecraft:glass", settings.get(PortalSettingsCodec.KEY_SURFACE_SKIN));
+        assertFalse(settings.containsKey(LEGACY_KEY_SURFACE_THICKNESS));
+    }
+
+    @Test
+    void applyToLocalAppliesCosmeticsWithSafeParsing() {
+        LocalPortal portal = localPortal();
+        Map<String, String> valid = new LinkedHashMap<>();
+        valid.put(PortalSettingsCodec.KEY_AMBIENT_STYLE, "CORNERS");
+        valid.put(PortalSettingsCodec.KEY_AMBIENT_COLOR, Integer.toString(0x00FF00));
+        valid.put(PortalSettingsCodec.KEY_SURFACE_SKIN, "minecraft:glass");
+
+        PortalSettingsCodec.applyToLocal(portal, valid);
+
+        assertEquals(AmbientParticleStyle.CORNERS, portal.getAmbientStyle());
+        assertEquals(0x00FF00, portal.getAmbientColor());
+        assertEquals("minecraft:glass", portal.getSurfaceSkin());
+        assertTrue(portal.hasSurfaceSkin());
+
+        Map<String, String> malformed = new LinkedHashMap<>();
+        malformed.put(PortalSettingsCodec.KEY_AMBIENT_STYLE, "NOT_A_STYLE");
+        malformed.put(PortalSettingsCodec.KEY_AMBIENT_COLOR, "xyz");
+
+        PortalSettingsCodec.applyToLocal(portal, malformed);
+
+        assertEquals(AmbientParticleStyle.CORNERS, portal.getAmbientStyle());
+        assertEquals(0x00FF00, portal.getAmbientColor());
+    }
+
+    @Test
+    void legacyPeerSurfaceThicknessKeyIsIgnoredWithoutDisturbingOtherSettings() {
+        LocalPortal portal = localPortal();
+        Map<String, String> fromOlderPeer = new LinkedHashMap<>();
+        fromOlderPeer.put(LEGACY_KEY_SURFACE_THICKNESS, "45");
+        fromOlderPeer.put(PortalSettingsCodec.KEY_SURFACE_SKIN, "minecraft:glass");
+        fromOlderPeer.put(PortalSettingsCodec.KEY_ACTIVATION_RANGE, "96");
+
+        PortalSettingsCodec.applyToLocal(portal, fromOlderPeer);
+
+        assertEquals("minecraft:glass", portal.getSurfaceSkin());
+        assertEquals(96, portal.getActivationRange());
+
+        RemotePortal remote = newRemotePortal("alpha", UUID.randomUUID());
+
+        PortalSettingsCodec.applyToRemote(remote, fromOlderPeer);
+
+        assertEquals("minecraft:glass", remote.getMirroredSurfaceSkin());
+        assertEquals(96, remote.getMirroredActivationRange());
+    }
+
+    @Test
+    void directoryRefreshCarriesMirroredCosmetics() {
+        RemotePortalRegistry registry = new RemotePortalRegistry();
+        UUID portalId = UUID.randomUUID();
+        registry.applyUpsert("alpha", portalInfo(portalId, true));
+        RemotePortal remote = registry.get("alpha", portalId);
+        remote.setMirroredAmbientStyle(AmbientParticleStyle.CORNERS);
+        remote.setMirroredAmbientColor(0x00FF00);
+        remote.setMirroredSurfaceSkin("minecraft:glass");
+
+        registry.applyDirectory("alpha", List.of(portalInfo(portalId, true)));
+
+        RemotePortal refreshed = registry.get("alpha", portalId);
+        assertNotNull(refreshed);
+        assertEquals(AmbientParticleStyle.CORNERS, refreshed.getMirroredAmbientStyle());
+        assertEquals(0x00FF00, refreshed.getMirroredAmbientColor());
+        assertEquals("minecraft:glass", refreshed.getMirroredSurfaceSkin());
+    }
+
+    @Test
+    void reEntryGuardSuppressesNestedBroadcast() {
+        assertFalse(PortalSyncService.isApplyingRemote());
+        runWithReentryGuard(() -> {
+            assertTrue(PortalSyncService.isApplyingRemote());
+        });
+        assertFalse(PortalSyncService.isApplyingRemote());
+    }
+
+    @Test
+    void malformedMirrorRotationPreservesPreviousValue() {
+        RemotePortal remote = newRemotePortal("alpha", UUID.randomUUID());
+        remote.setMirroredProjectionRotation(QuarterTurn.DEGREES_180);
+
+        PortalSettingsCodec.applyToRemote(remote, Map.of(PortalSettingsCodec.KEY_MIRROR_ROTATION, "not-a-number"));
+
+        assertEquals(QuarterTurn.DEGREES_180, remote.getMirroredProjectionRotation());
+    }
+
+    @Test
+    void productionUpdatePopulatesRemotePreflightAndSurvivesRegistryRefresh() {
+        RemotePortalRegistry previousRegistry = Wormholes.remotePortalRegistry;
+        PortalManager previousPortalManager = Wormholes.portalManager;
+        RemotePortalRegistry registry = new RemotePortalRegistry();
+        UUID portalId = UUID.randomUUID();
+        try {
+            Wormholes.remotePortalRegistry = registry;
+            Wormholes.portalManager = null;
+            registry.applyUpsert("alpha", portalInfo(portalId, true));
+            PortalSyncService<ILocalPortal> sync = BukkitPortalSyncAccess.create(null, List::of, Runnable::run);
+            Map<String, String> settings = new LinkedHashMap<>();
+            settings.put(PortalSettingsCodec.KEY_PROJECTION_MODE, ProjectionMode.ON.name());
+            settings.put(PortalSettingsCodec.KEY_MIRROR_MODE, "true");
+            settings.put(PortalSettingsCodec.KEY_MIRROR_ROTATION, "180");
+            settings.put(PortalSettingsCodec.KEY_INCOMING_TRAVERSALS, "false");
+
+            sync.applySettingsUpdate("alpha", new WireMessage.PortalSettingsUpdate(portalId, settings));
+
+            assertMirrorPreflight(registry.get("alpha", portalId));
+            registry.applyUpsert("alpha", portalInfo(portalId, false));
+            assertMirrorPreflight(registry.get("alpha", portalId));
+            registry.applyDirectory("alpha", List.of(portalInfo(portalId, true)));
+            assertMirrorPreflight(registry.get("alpha", portalId));
+        } finally {
+            Wormholes.remotePortalRegistry = previousRegistry;
+            Wormholes.portalManager = previousPortalManager;
+        }
+    }
+
+    private static void assertMirrorPreflight(RemotePortal remote) {
+        assertNotNull(remote);
+        assertEquals(ProjectionMode.ON, remote.getMirroredProjectionMode());
+        assertTrue(remote.isMirroredMirrorMode());
+        assertEquals(QuarterTurn.DEGREES_180, remote.getMirroredProjectionRotation());
+        assertFalse(remote.isMirroredIncomingTraversalsEnabled());
+        assertFalse(remote.acceptsInboundTraversal());
+    }
+
+    private static void runWithReentryGuard(Runnable inside) {
+        try {
+            java.lang.reflect.Field guardField = PortalSyncService.class.getDeclaredField("APPLYING_REMOTE");
+            guardField.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            ThreadLocal<Boolean> guard = (ThreadLocal<Boolean>) guardField.get(null);
+            guard.set(Boolean.TRUE);
+            try {
+                inside.run();
+            } finally {
+                guard.set(Boolean.FALSE);
+            }
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static final class RecordingNetworkManager extends NetworkManager {
+        private final List<WireMessage> messages = new ArrayList<>();
+
+        private RecordingNetworkManager(Path dataDirectory) {
+            super(Logger.getLogger("PortalSettingsSyncTest"), new NetworkManager.Options( new NetworkConfig(), "26.2", "test", 25565, dataDirectory, BukkitJsonDocuments.INSTANCE, ClientVersion.getLatest().getProtocolVersion()));
+        }
+
+        @Override
+        public boolean isRunning() {
+            return true;
+        }
+
+        @Override
+        public List<PeerStatus> status() {
+            return List.of(new PeerStatus("beta", "127.0.0.1", "CONNECTED", true, 1L, 1L, null));
+        }
+
+        @Override
+        public void sendToPeers(Collection<String> peerNames, WireMessage message) {
+            messages.add(message);
+        }
+
+        private WireMessage singleMessage() {
+            assertEquals(1, messages.size());
+            return messages.get(0);
+        }
+
+        private void clear() {
+            messages.clear();
+        }
+    }
+}

@@ -1,0 +1,9 @@
+{
+  "type": "minecraft:function",
+  "function": "wormholes:recipe_book_runtime",
+  "environment": "wormholes:recipe_book_runtime",
+  "structure": "wormholes:empty",
+  "max_ticks": 1200,
+  "setup_ticks": 5,
+  "sky_access": true
+}

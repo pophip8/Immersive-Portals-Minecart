@@ -1,0 +1,1247 @@
+package art.arcane.volmlib.util.mantle;
+
+import art.arcane.volmlib.util.VolmLog;
+import art.arcane.volmlib.util.cache.CacheKey;
+import art.arcane.volmlib.util.collection.KMap;
+import art.arcane.volmlib.util.collection.KSet;
+import art.arcane.volmlib.util.documentation.BlockCoordinates;
+import art.arcane.volmlib.util.documentation.ChunkCoordinates;
+import art.arcane.volmlib.util.documentation.RegionCoordinates;
+import art.arcane.volmlib.util.function.Consumer3;
+import art.arcane.volmlib.util.function.Consumer4;
+import art.arcane.volmlib.util.mantle.flag.MantleFlag;
+import art.arcane.volmlib.util.parallel.HyperLockSupport;
+import art.arcane.volmlib.util.parallel.MultiBurstSupport;
+import org.bukkit.Chunk;
+
+import java.io.File;
+import java.io.InterruptedIOException;
+import java.nio.channels.ClosedChannelException;
+import java.nio.file.FileSystemException;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.function.Predicate;
+
+/**
+ * Shared concrete mantle runtime with plugin hook points for chunk data behavior,
+ * persistence, and logging/reporting.
+ */
+public abstract class Mantle<P extends TectonicPlate<C>, C extends MantleChunk<?>> extends MantleAccessSupport<P> {
+    public static final int DEFAULT_LOCK_SIZE = Short.MAX_VALUE;
+
+    private final File dataFolder;
+    private final int lockSize;
+    private final int worldHeight;
+    private static final long USE_STAMP_INTERVAL_MILLIS = 250L;
+    private static final int MAXIMUM_CAUSE_DEPTH = 32;
+    private static final int RESIDENT_SHIFT = 5;
+    private static final int RESIDENT_MASK = (1 << RESIDENT_SHIFT) - 1;
+    private final KMap<Long, Long> lastUse;
+    private final KMap<Long, P> loadedRegions;
+    private final ConcurrentMap<Long, CompletableFuture<P>> loadingRegions;
+    private final HyperLockSupport hyperLock;
+    private final AtomicBoolean closed;
+    private final MultiBurstSupport ioBurst;
+    private final RegionIO<P> regionIO;
+    private final KSet<Long> toUnload;
+    private final AtomicReferenceArray<Resident<P>> residents;
+
+    private volatile double adjustedIdleDuration;
+
+    protected Mantle(File dataFolder,
+                     int worldHeight,
+                     HyperLockSupport hyperLock,
+                     MultiBurstSupport ioBurst,
+                     RegionIO<P> regionIO) {
+        this(dataFolder, worldHeight, DEFAULT_LOCK_SIZE, hyperLock, ioBurst, regionIO);
+    }
+
+    protected Mantle(File dataFolder,
+                     int worldHeight,
+                     int lockSize,
+                     HyperLockSupport hyperLock,
+                     MultiBurstSupport ioBurst,
+                     RegionIO<P> regionIO) {
+        super(lockSize);
+        this.dataFolder = dataFolder;
+        this.lockSize = Math.max(lockSize, 1);
+        this.worldHeight = worldHeight;
+        this.hyperLock = hyperLock;
+        this.ioBurst = ioBurst;
+        this.regionIO = regionIO;
+        this.loadedRegions = new KMap<>();
+        this.loadingRegions = new ConcurrentHashMap<>();
+        this.lastUse = new KMap<>();
+        this.toUnload = new KSet<>();
+        this.residents = new AtomicReferenceArray<>(1 << (RESIDENT_SHIFT * 2));
+        this.closed = new AtomicBoolean(false);
+        this.adjustedIdleDuration = 0;
+
+        onDebug("Opened The Mantle " + dataFolder.getAbsolutePath());
+    }
+
+    public static File fileForRegion(File folder, int x, int z) {
+        return MantleRegionFiles.fileForRegion(folder, x, z);
+    }
+
+    public static File fileForRegion(File folder, Long key, boolean convert) {
+        return MantleRegionFiles.fileForRegion(folder, key, convert);
+    }
+
+    public static File oldFileForRegion(File folder, Long key) {
+        return MantleRegionFiles.oldFileForRegion(folder, key);
+    }
+
+    public static Long key(int x, int z) {
+        return MantleRegionFiles.key(x, z);
+    }
+
+    public File getDataFolder() {
+        return dataFolder;
+    }
+
+    public int getWorldHeight() {
+        return worldHeight;
+    }
+
+    public void clear() {
+        loadedRegions.values().forEach(TectonicPlate::clear);
+        loadedRegions.clear();
+        for (int slot = 0; slot < residents.length(); slot++) {
+            residents.set(slot, null);
+        }
+        loadingRegions.clear();
+        lastUse.clear();
+        toUnload.clear();
+    }
+
+    @ChunkCoordinates
+    public void raiseFlag(int x, int z, MantleFlag flag, Runnable r) {
+        if (!hasFlag(x, z, flag)) {
+            flag(x, z, flag, true);
+            r.run();
+        }
+    }
+
+    @ChunkCoordinates
+    public void lowerFlag(int x, int z, MantleFlag flag, Runnable r) {
+        if (hasFlag(x, z, flag)) {
+            flag(x, z, flag, false);
+            r.run();
+        }
+    }
+
+    @ChunkCoordinates
+    public C getChunk(int x, int z) {
+        P plate = pinRegion(x >> 5, z >> 5);
+        try {
+            return plate.getOrCreatePinned(x & 31, z & 31);
+        } finally {
+            plate.unpin();
+        }
+    }
+
+    /**
+     * The chunk with a use already taken for the caller, who releases it. A use taken on a {@link #getChunk}
+     * result fails when the plate was saved in between; this one cannot.
+     */
+    @ChunkCoordinates
+    public C useChunk(int x, int z) {
+        P plate = pinRegion(x >> 5, z >> 5);
+        try {
+            C chunk = plate.getOrCreatePinned(x & 31, z & 31);
+            chunk.use();
+            return chunk;
+        } finally {
+            plate.unpin();
+        }
+    }
+
+    public C getChunk(Chunk chunk) {
+        return getChunk(chunk.getX(), chunk.getZ());
+    }
+
+    public C useChunk(Chunk chunk) {
+        return useChunk(chunk.getX(), chunk.getZ());
+    }
+
+    public void getChunks(final int minChunkX,
+                          final int maxChunkX,
+                          final int minChunkZ,
+                          final int maxChunkZ,
+                          int parallelism,
+                          final Consumer3<Integer, Integer, C> consumer) {
+        if (parallelism <= 0) {
+            parallelism = 1;
+        }
+
+        unloadSemaphore().acquireUninterruptibly();
+        try {
+            final int minRegionX = minChunkX >> 5;
+            final int maxRegionX = maxChunkX >> 5;
+            final int minRegionZ = minChunkZ >> 5;
+            final int maxRegionZ = maxChunkZ >> 5;
+
+            final int minRelativeX = minChunkX & 31;
+            final int maxRelativeX = maxChunkX & 31;
+            final int minRelativeZ = minChunkZ & 31;
+            final int maxRelativeZ = maxChunkZ & 31;
+
+            if (parallelism <= 1) {
+                for (int rX = minRegionX; rX <= maxRegionX; rX++) {
+                    final int minX = rX == minRegionX ? minRelativeX : 0;
+                    final int maxX = rX == maxRegionX ? maxRelativeX : 31;
+                    for (int rZ = minRegionZ; rZ <= maxRegionZ; rZ++) {
+                        final int minZ = rZ == minRegionZ ? minRelativeZ : 0;
+                        final int maxZ = rZ == maxRegionZ ? maxRelativeZ : 31;
+                        final int realX = rX << 5;
+                        final int realZ = rZ << 5;
+
+                        visitPinnedRegion(pinRegion(rX, rZ), minX, maxX, minZ, maxZ, realX, realZ, consumer);
+                    }
+                }
+                return;
+            }
+
+            final Semaphore lock = new Semaphore(parallelism);
+            final AtomicInteger queued = new AtomicInteger();
+            final AtomicInteger completed = new AtomicInteger();
+            final AtomicLong waitStart = new AtomicLong(nowMillis());
+
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            try {
+                for (int rX = minRegionX; rX <= maxRegionX; rX++) {
+                    final int minX = rX == minRegionX ? minRelativeX : 0;
+                    final int maxX = rX == maxRegionX ? maxRelativeX : 31;
+                    for (int rZ = minRegionZ; rZ <= maxRegionZ; rZ++) {
+                        final int minZ = rZ == minRegionZ ? minRelativeZ : 0;
+                        final int maxZ = rZ == maxRegionZ ? maxRelativeZ : 31;
+                        final int realX = rX << 5;
+                        final int realZ = rZ << 5;
+                        final int regionX = rX;
+                        final int regionZ = rZ;
+
+                        Throwable pending = error.get();
+                        if (pending != null) {
+                            if (pending instanceof RuntimeException re) {
+                                throw re;
+                            }
+                            if (pending instanceof Error err) {
+                                throw err;
+                            }
+                            throw new RuntimeException(pending);
+                        }
+
+                        P resident = getLoadedRegion(rX, rZ);
+                        if (resident != null && resident.pin()) {
+                            markRegionUsed(rX, rZ, resident);
+                            visitPinnedRegion(resident, minX, maxX, minZ, maxZ, realX, realZ, consumer);
+                            continue;
+                        }
+
+                        while (true) {
+                            try {
+                                if (lock.tryAcquire(5, TimeUnit.SECONDS)) {
+                                    break;
+                                }
+                            } catch (InterruptedException e) {
+                                onWarn("Mantle.getChunks interrupted while waiting for permit.");
+                                onError(e);
+                                Thread.currentThread().interrupt();
+                                throw new IllegalStateException("Interrupted while waiting for Mantle.getChunks permit", e);
+                            }
+
+                            onWarn("Mantle.getChunks permit wait " + (nowMillis() - waitStart.get()) + "ms"
+                                    + " queued=" + queued.get()
+                                    + " completed=" + completed.get()
+                                    + " parallelism=" + parallelism
+                                    + " range=" + minChunkX + "," + minChunkZ + "->" + maxChunkX + "," + maxChunkZ);
+                        }
+
+                        queued.incrementAndGet();
+                        getFuture(rX, rZ)
+                                .thenAccept(region -> visitRegionChunks(region, regionX, regionZ, minX, maxX, minZ, maxZ, realX, realZ, consumer))
+                                .exceptionally(ex -> {
+                                    error.set(ex);
+                                    return null;
+                                })
+                                .thenRun(() -> {
+                                    completed.incrementAndGet();
+                                    lock.release();
+                                });
+                    }
+                }
+            } finally {
+                lock.acquireUninterruptibly(parallelism);
+            }
+
+            Throwable failure = error.get();
+            if (failure != null) {
+                if (failure instanceof RuntimeException re) {
+                    throw re;
+                }
+                if (failure instanceof Error err) {
+                    throw err;
+                }
+                throw new RuntimeException(failure);
+            }
+        } finally {
+            unloadSemaphore().release();
+        }
+    }
+
+    private void visitRegionChunks(P region, int rX, int rZ, int minX, int maxX, int minZ, int maxZ,
+                                   int realX, int realZ, Consumer3<Integer, Integer, C> consumer) {
+        P plate = region.pin() ? region : pinRegion(rX, rZ);
+        visitPinnedRegion(plate, minX, maxX, minZ, maxZ, realX, realZ, consumer);
+    }
+
+    private void visitPinnedRegion(P plate, int minX, int maxX, int minZ, int maxZ,
+                                   int realX, int realZ, Consumer3<Integer, Integer, C> consumer) {
+        try {
+            for (int xx = minX; xx <= maxX; xx++) {
+                for (int zz = minZ; zz <= maxZ; zz++) {
+                    consumer.accept(realX + xx, realZ + zz, plate.getOrCreatePinned(xx, zz));
+                }
+            }
+        } finally {
+            plate.unpin();
+        }
+    }
+
+    @ChunkCoordinates
+    public void flag(int x, int z, MantleFlag flag, boolean flagged) {
+        P plate = pinRegion(x >> 5, z >> 5);
+        try {
+            plate.getOrCreatePinned(x & 31, z & 31).flag(flag, flagged);
+        } finally {
+            plate.unpin();
+        }
+    }
+
+    public void deleteChunk(int x, int z) {
+        P plate = pinRegion(x >> 5, z >> 5);
+        try {
+            plate.deletePinned(x & 31, z & 31);
+        } finally {
+            plate.unpin();
+        }
+    }
+
+    @RegionCoordinates
+    public boolean hasTectonicPlate(int x, int z) {
+        return getLoadedRegion(x, z) != null || fileForRegion(dataFolder, key(x, z), true).exists();
+    }
+
+    @ChunkCoordinates
+    public <T> void iterateChunk(int x, int z, Class<T> type, Consumer4<Integer, Integer, Integer, T> iterator) {
+        iterateChunkValues(getChunk(x, z), type, iterator);
+    }
+
+    @ChunkCoordinates
+    public boolean hasFlag(int x, int z, MantleFlag flag) {
+        if (!hasTectonicPlate(x >> 5, z >> 5)) {
+            return false;
+        }
+
+        P plate = pinRegion(x >> 5, z >> 5);
+        try {
+            return plate.getOrCreatePinned(x & 31, z & 31).isFlagged(flag);
+        } finally {
+            plate.unpin();
+        }
+    }
+
+    @ChunkCoordinates
+    public boolean hasLoadedFlag(int x, int z, MantleFlag flag) {
+        P plate = getLoadedRegion(x >> 5, z >> 5);
+        if (plate == null || plate.isClosed()) {
+            return false;
+        }
+        C chunk = plate.get(x & 31, z & 31);
+        return chunk != null && !chunk.isClosed() && chunk.isFlagged(flag);
+    }
+
+    @ChunkCoordinates
+    public boolean withLoadedChunk(int x, int z, Predicate<C> action) {
+        int regionX = x >> 5;
+        int regionZ = z >> 5;
+        P plate = getLoadedRegion(regionX, regionZ);
+        if (plate == null || plate.isClosed()) {
+            return false;
+        }
+        Long regionKey = key(regionX, regionZ);
+        C chunk = plate.get(x & 31, z & 31);
+        if (chunk == null || chunk.isClosed()) {
+            return false;
+        }
+        synchronized (chunk) {
+            if (!hyperLock.tryLock(regionX, regionZ)) {
+                return false;
+            }
+            try {
+                if (closed.get() || loadedRegions.get(regionKey) != plate || plate.isClosed()
+                        || plate.get(x & 31, z & 31) != chunk || chunk.isClosed()) {
+                    return false;
+                }
+                return action.test(chunk);
+            } finally {
+                hyperLock.unlock(regionX, regionZ);
+            }
+        }
+    }
+
+    @BlockCoordinates
+    public <T> void set(int x, int y, int z, T t) {
+        ensureOpen();
+        if (y < 0 || y >= worldHeight) {
+            return;
+        }
+
+        int chunkX = x >> 4;
+        int chunkZ = z >> 4;
+        P plate = pinRegion(chunkX >> 5, chunkZ >> 5);
+        try {
+            setChunkValue(plate.getOrCreatePinned(chunkX & 31, chunkZ & 31), x & 15, y, z & 15, t);
+        } finally {
+            plate.unpin();
+        }
+    }
+
+    @BlockCoordinates
+    public <T> void remove(int x, int y, int z, Class<T> type) {
+        ensureOpen();
+        if (y < 0 || y >= worldHeight) {
+            return;
+        }
+
+        int chunkX = x >> 4;
+        int chunkZ = z >> 4;
+        P plate = pinRegion(chunkX >> 5, chunkZ >> 5);
+        try {
+            removeChunkValue(plate.getOrCreatePinned(chunkX & 31, chunkZ & 31), x & 15, y, z & 15, type);
+        } finally {
+            plate.unpin();
+        }
+    }
+
+    @BlockCoordinates
+    public <T> T get(int x, int y, int z, Class<T> type) {
+        ensureOpen();
+
+        if (!hasTectonicPlate((x >> 4) >> 5, (z >> 4) >> 5)) {
+            return null;
+        }
+
+        if (y < 0 || y >= worldHeight) {
+            return null;
+        }
+
+        int chunkX = x >> 4;
+        int chunkZ = z >> 4;
+        P plate = pinRegion(chunkX >> 5, chunkZ >> 5);
+        try {
+            return getChunkValue(plate.getOrCreatePinned(chunkX & 31, chunkZ & 31), x & 15, y, z & 15, type);
+        } finally {
+            plate.unpin();
+        }
+    }
+
+    public boolean isClosed() {
+        return closed.get();
+    }
+
+    public synchronized void close() {
+        onDebug("Closing The Mantle " + dataFolder.getAbsolutePath());
+        if (closed.getAndSet(true)) {
+            return;
+        }
+
+        unloadSemaphore().acquireUninterruptibly(lockSize);
+        try {
+            // Per-plate locked flush evicts with identity checks; no bulk loadedRegions.clear()
+            // here — that silently threw away any plate a concurrent access resurrected
+            // mid-flush, losing everything written into it.
+            flushLoadedRegions();
+            loadingRegions.clear();
+            lastUse.clear();
+            toUnload.clear();
+            regionIO.close();
+        } catch (Exception e) {
+            closed.set(false);
+            throw new IllegalStateException("Failed to close mantle storage " + dataFolder.getAbsolutePath(), e);
+        } catch (Error e) {
+            closed.set(false);
+            throw e;
+        } finally {
+            unloadSemaphore().release(lockSize);
+        }
+
+        // Disable AFTER the flush: the flush depends on the per-region lock for its
+        // serialization, and disabling first also deadlocked against in-flight holders.
+        hyperLock.disable();
+
+        deleteTemporaryFiles();
+        onDebug("The Mantle has Closed " + dataFolder.getAbsolutePath());
+    }
+
+    public synchronized void trim(long baseIdleDuration) {
+        trim(baseIdleDuration, Integer.MAX_VALUE);
+    }
+
+    public synchronized void trim(long baseIdleDuration, int tectonicLimit) {
+        ensureOpen();
+
+        adjustedIdleDuration = MantleLifecycleSupport.adjustIdleDuration(baseIdleDuration, loadedRegions.size(), tectonicLimit);
+
+        trimSemaphore().acquireUninterruptibly(lockSize);
+        try {
+            onDebug("Trimming Tectonic Plates older than " + formatDuration(adjustedIdleDuration));
+            if (lastUse.isEmpty()) {
+                return;
+            }
+
+            MantleLifecycleSupport.collectUnloadCandidates(
+                    lastUse.keySet(),
+                    lastUse::get,
+                    nowMillis(),
+                    adjustedIdleDuration,
+                    hyperLock::withLong,
+                    this::markForUnload,
+                    this::onDebug,
+                    this::onError
+            );
+        } catch (Throwable e) {
+            onError(e);
+        } finally {
+            trimSemaphore().release(lockSize);
+        }
+    }
+
+    public synchronized int unloadTectonicPlate(int tectonicLimit) {
+        ensureOpen();
+
+        unloadSemaphore().acquireUninterruptibly(lockSize);
+        try {
+            return MantleLifecycleSupport.unloadRegions(
+                    toUnload.size(),
+                    tectonicLimit,
+                    nowMillis(),
+                    adjustedIdleDuration,
+                    toUnload,
+                    ioBurst::burst,
+                    hyperLock::withLong,
+                    loadedRegions::get,
+                    lastUse::get,
+                    toUnload::contains,
+                    TectonicPlate::trySeal,
+                    this::use,
+                    this::persistTargetedRegion,
+                    this::removeLoadedRegion,
+                    lastUse::remove,
+                    toUnload::remove,
+                    (id, m) -> "Unloaded Tectonic Plate " + CacheKey.keyX(id) + " " + CacheKey.keyZ(id),
+                    (id, m) -> "Tectonic Plate was added to unload while in use " + m.getX() + " " + m.getZ(),
+                    id -> "Tectonic Plate was added to unload while not loaded " + CacheKey.keyX(id) + " " + CacheKey.keyZ(id),
+                    this::onError,
+                    this::onDebug
+            );
+        } catch (Throwable e) {
+            onError(e);
+        } finally {
+            unloadSemaphore().release(lockSize);
+        }
+
+        return 0;
+    }
+
+    @RegionCoordinates
+    private P get(int x, int z) {
+        ensureOpen();
+        return accessRegion(x, z);
+    }
+
+    /**
+     * The open plate of the region with a pin taken for the caller, who unpins it. A resident plate is pinned
+     * without the region lock; one that is missing or closed by a save in progress is loaded, or waited for,
+     * under the lock.
+     */
+    @RegionCoordinates
+    private P pinRegion(int x, int z) {
+        ensureOpen();
+        P region = getLoadedRegion(x, z);
+        if (region != null && region.pin()) {
+            markRegionUsed(x, z, region);
+            return region;
+        }
+        while (true) {
+            region = get(x, z);
+            if (region.pin()) {
+                return region;
+            }
+        }
+    }
+
+    private CompletableFuture<P> getFuture(int x, int z) {
+        ensureOpen();
+        return accessRegionFuture(x, z);
+    }
+
+    public synchronized void saveAll() {
+        ensureOpen();
+        unloadSemaphore().acquireUninterruptibly(lockSize);
+        try {
+            // Eviction happens per plate inside the locked flush (identity-checked), so a
+            // plate resurrected by a concurrent access survives instead of being dropped.
+            flushLoadedRegions();
+            loadingRegions.clear();
+            lastUse.clear();
+            toUnload.clear();
+        } finally {
+            unloadSemaphore().release(lockSize);
+        }
+    }
+
+    /**
+     * Flushes and unloads every resident region, invalidates the region IO layer (dropping any
+     * cached file channels), then deletes the persisted region files. The mantle stays open and
+     * usable; subsequent reads see an empty store. Deleting files without first closing the IO
+     * layer would leave cached channels pointing at unlinked inodes, so post-reset writes would
+     * silently vanish. The unload-permit fence is held across the whole reset — flush, IO close
+     * and unlink — and any region still (or newly) resident afterwards fails the reset loudly:
+     * a partial reset reported as success corrupts whatever the caller resets for.
+     */
+    public synchronized void resetStorage() throws Exception {
+        ensureOpen();
+        unloadSemaphore().acquireUninterruptibly(lockSize);
+        try {
+            flushLoadedRegions();
+            loadingRegions.clear();
+            lastUse.clear();
+            toUnload.clear();
+            regionIO.close();
+            File[] files = dataFolder.listFiles();
+            if (files != null) {
+                for (File file : files) {
+                    if (file.isFile() && !file.delete()) {
+                        throw new IllegalStateException("Could not delete mantle region file " + file.getAbsolutePath());
+                    }
+                }
+            }
+            deleteTemporaryFiles();
+            if (!loadedRegions.isEmpty()) {
+                throw new IllegalStateException("Mantle reset raced concurrent region activity; "
+                        + loadedRegions.size() + " region(s) remained resident through the reset");
+            }
+        } finally {
+            unloadSemaphore().release(lockSize);
+        }
+    }
+
+    public synchronized Set<Long> saveIdleTectonicPlates(Iterable<Long> regionIds) {
+        ensureOpen();
+        if (regionIds == null) {
+            throw new IllegalArgumentException("Tectonic plate region ids must not be null");
+        }
+        Set<Long> deferred = new LinkedHashSet<>();
+        for (Long regionId : regionIds) {
+            if (regionId == null) {
+                throw new IllegalArgumentException("Tectonic plate region id must not be null");
+            }
+            if (!trySaveIdleTectonicPlate(regionId)) {
+                deferred.add(regionId);
+            }
+        }
+        return Set.copyOf(deferred);
+    }
+
+    public synchronized boolean saveOldestIdleTectonicPlate() {
+        ensureOpen();
+        long cutoff = nowMillis() - USE_STAMP_INTERVAL_MILLIS;
+        List<IdleRegion> candidates = new ArrayList<>(lastUse.size());
+        lastUse.forEach((id, used) -> {
+            if (used < cutoff) {
+                candidates.add(new IdleRegion(id, used));
+            }
+        });
+        candidates.sort(Comparator.comparingLong(IdleRegion::lastUse).thenComparingLong(IdleRegion::id));
+        for (IdleRegion candidate : candidates) {
+            if (Thread.currentThread().isInterrupted()) {
+                return false;
+            }
+            int regionX = CacheKey.keyX(candidate.id());
+            int regionZ = CacheKey.keyZ(candidate.id());
+            if (!hyperLock.tryLock(regionX, regionZ)) {
+                continue;
+            }
+            try {
+                Long used = lastUse.get(candidate.id());
+                if (used == null || used.longValue() != candidate.lastUse()
+                        || !loadedRegions.containsKey(candidate.id())) {
+                    continue;
+                }
+                if (saveTectonicPlateLocked(candidate.id(), true)) {
+                    return true;
+                }
+            } finally {
+                hyperLock.unlock(regionX, regionZ);
+            }
+        }
+        return false;
+    }
+
+    private record IdleRegion(long id, long lastUse) {
+    }
+
+    public void deleteChunkSlice(int x, int z, Class<?> type) {
+        if (shouldRetainSlice(type)) {
+            return;
+        }
+
+        P plate = pinRegion(x >> 5, z >> 5);
+        try {
+            deleteChunkSlice(plate.getOrCreatePinned(x & 31, z & 31), type);
+        } finally {
+            plate.unpin();
+        }
+    }
+
+    public int getLoadedRegionCount() {
+        return loadedRegions.size();
+    }
+
+    public int getUnloadRegionCount() {
+        return toUnload.size();
+    }
+
+    public double getAdjustedIdleDuration() {
+        return adjustedIdleDuration;
+    }
+
+    public boolean isLoaded(Chunk chunk) {
+        return getLoadedRegion(chunk.getX() >> 5, chunk.getZ() >> 5) != null;
+    }
+
+    public boolean isChunkLoaded(int chunkX, int chunkZ) {
+        return getLoadedRegion(chunkX >> 5, chunkZ >> 5) != null;
+    }
+
+    public KMap<Long, P> getLoadedRegions() {
+        return loadedRegions;
+    }
+
+    @Override
+    protected String regionName() {
+        return "Tectonic Plate";
+    }
+
+    @Override
+    protected String regionRetryName() {
+        return "Mantle Region";
+    }
+
+    @Override
+    protected CompletableFuture<P> loadRegionSafe(int x, int z) {
+        return getSafe(x, z);
+    }
+
+    @Override
+    protected P loadRegionBlocking(int x, int z) {
+        return loadRegionNow(x, z);
+    }
+
+    /**
+     * The resident plate for the region, open or closing, without touching its idle timer.
+     */
+    @Override
+    public P getLoadedRegion(int x, int z) {
+        Resident<P> resident = residents.get(residentSlot(x, z));
+        if (resident == null) {
+            return null;
+        }
+        if (resident.collided()) {
+            return loadedRegions.get(key(x, z));
+        }
+        return resident.x == x && resident.z == z ? resident.region : null;
+    }
+
+    @Override
+    protected P acquireLoadedRegion(int x, int z) {
+        return hyperLock.withResult(x, z, () -> {
+            P region = getLoadedRegion(x, z);
+            if (region != null && !isRegionClosed(region)) {
+                markRegionUsed(x, z, region);
+                return region;
+            }
+
+            return null;
+        });
+    }
+
+    @Override
+    protected P acquireLoadedRegionGuarded(int x, int z) {
+        P region = getLoadedRegion(x, z);
+        if (region != null && !isRegionClosed(region)) {
+            markRegionUsed(x, z, region);
+            return region;
+        }
+        return null;
+    }
+
+    @Override
+    protected boolean isRegionClosed(P region) {
+        return region.isClosed();
+    }
+
+    @Override
+    protected void markRegionUsed(int x, int z, P region) {
+        Resident<P> resident = residents.get(residentSlot(x, z));
+        boolean tracked = resident != null && resident.region == region;
+        if (tracked && !resident.unloadPending && nowMillis() - resident.used < USE_STAMP_INTERVAL_MILLIS) {
+            return;
+        }
+        long used = use(key(x, z));
+        if (tracked) {
+            resident.used = used;
+            resident.unloadPending = false;
+        }
+    }
+
+    @Override
+    protected void warn(String message) {
+        onWarn(message);
+    }
+
+    @Override
+    protected void report(Throwable throwable) {
+        onError(throwable);
+    }
+
+    protected CompletableFuture<P> getSafe(int x, int z) {
+        ensureOpen();
+        Long k = key(x, z);
+        P loaded = loadedRegions.get(k);
+        if (loaded != null && !loaded.isClosed()) {
+            use(k);
+            return CompletableFuture.completedFuture(loaded);
+        }
+
+        CompletableFuture<P> existing = loadingRegions.get(k);
+        if (existing != null) {
+            return existing;
+        }
+
+        CompletableFuture<P> published = new CompletableFuture<>();
+        existing = loadingRegions.putIfAbsent(k, published);
+        if (existing != null) {
+            return existing;
+        }
+
+        try {
+            ioBurst.completableFuture(() -> loadRegionNow(x, z))
+                    .whenComplete((region, failure) -> completeRegionLoad(k, published, region, failure));
+        } catch (Throwable failure) {
+            completeRegionLoad(k, published, null, failure);
+        }
+        return published;
+    }
+
+    private void completeRegionLoad(long key, CompletableFuture<P> published, P region, Throwable failure) {
+        loadingRegions.remove(key, published);
+        if (failure == null) {
+            published.complete(region);
+        } else {
+            published.completeExceptionally(failure);
+        }
+    }
+
+    private P loadRegionNow(int x, int z) {
+        ensureOpen();
+        return hyperLock.withResult(x, z, () -> {
+            Long k = key(x, z);
+            use(k);
+
+            P loaded = loadedRegions.get(k);
+            if (loaded != null && !loaded.isClosed()) {
+                return loaded;
+            }
+
+            File file = fileForRegion(dataFolder, x, z);
+            if (file.exists()) {
+                if (file.length() == 0L) {
+                    if (!file.delete()) {
+                        file.deleteOnExit();
+                    }
+
+                    P fallback = createRegion(x, z);
+                    putLoadedRegion(x, z, k, fallback);
+                    onDebug("Created new Tectonic Plate (Due to Empty File) " + x + " " + z);
+                    use(k);
+                    return fallback;
+                }
+
+                try {
+                    P region = regionIO.read(file.getName());
+                    if (region.getX() != x || region.getZ() != z) {
+                        onWarn("Loaded Tectonic Plate " + x + "," + z + " but read it as " + region.getX() + "," + region.getZ() + ". Assuming " + x + "," + z);
+                    }
+
+                    putLoadedRegion(x, z, k, region);
+                    onDebug("Loaded Tectonic Plate " + x + " " + z + " " + file.getName());
+                    use(k);
+                    return region;
+                } catch (Throwable e) {
+                    if (isTransientReadFailure(e)) {
+                        rethrowReadFailure(file, e);
+                    }
+                    onWarn("Failed to read Tectonic Plate " + file.getAbsolutePath() + ", creating a new one.");
+                    onError(e);
+
+                    P fallback = createRegion(x, z);
+                    putLoadedRegion(x, z, k, fallback);
+                    onDebug("Created new Tectonic Plate (Due to Load Failure) " + x + " " + z);
+                    use(k);
+                    return fallback;
+                }
+            }
+
+            P region = createRegion(x, z);
+            putLoadedRegion(x, z, k, region);
+            onDebug("Created new Tectonic Plate " + x + " " + z);
+            use(k);
+            return region;
+        });
+    }
+
+    /**
+     * A read that failed because the reader was interrupted, the mantle or its channel closed, the file system
+     * refused the file or the JVM ran out of resources says nothing about the plate's content. A fresh plate
+     * would serve empty chunks now and overwrite the persisted plate at the next flush.
+     */
+    private static boolean isTransientReadFailure(Throwable failure) {
+        if (Thread.currentThread().isInterrupted()) {
+            return true;
+        }
+        Throwable current = failure;
+        for (int depth = 0; current != null && depth < MAXIMUM_CAUSE_DEPTH; depth++, current = current.getCause()) {
+            if (current instanceof Error
+                    || current instanceof MantleClosedException
+                    || current instanceof InterruptedException
+                    || current instanceof InterruptedIOException
+                    || current instanceof ClosedChannelException
+                    || current instanceof FileSystemException
+                    || current instanceof RejectedExecutionException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void rethrowReadFailure(File file, Throwable failure) {
+        if (failure instanceof RuntimeException runtimeFailure) {
+            throw runtimeFailure;
+        }
+        if (failure instanceof Error error) {
+            throw error;
+        }
+        if (failure instanceof InterruptedException) {
+            Thread.currentThread().interrupt();
+        }
+        throw new IllegalStateException("Failed to read Tectonic Plate " + file.getAbsolutePath(), failure);
+    }
+
+    protected long use(Long key) {
+        long now = nowMillis();
+        Long previous = lastUse.get(key);
+        long stamp = previous == null ? now : previous;
+        // Every mantle access lands here; the idle timers work in seconds, so a fresh stamp is
+        // only written once the previous one is stale enough to matter.
+        if (previous == null || now - previous >= USE_STAMP_INTERVAL_MILLIS) {
+            lastUse.put(key, now);
+            stamp = now;
+        }
+        if (!toUnload.isEmpty()) {
+            toUnload.remove(key);
+        }
+        return stamp;
+    }
+
+    protected long nowMillis() {
+        return System.currentTimeMillis();
+    }
+
+    protected String formatDuration(double millis) {
+        return millis + "ms";
+    }
+
+    protected void onDebug(String message) {
+    }
+
+    protected void onWarn(String message) {
+        VolmLog.warning("Mantle", message);
+    }
+
+    protected void onError(Throwable throwable) {
+        VolmLog.severe("Mantle", "Persistent world-data operation failed", throwable);
+    }
+
+    protected boolean shouldRetainSlice(Class<?> sliceType) {
+        return false;
+    }
+
+    protected void deleteTemporaryFiles() {
+        deleteDirectory(new File(dataFolder, ".tmp"));
+    }
+
+    private void flushLoadedRegions() {
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        MantleLifecycleSupport.flushLoadedRegions(
+                loadedRegions.size(),
+                consumer -> loadedRegions.forEach((id, plate) -> consumer.accept(id, plate)),
+                ioBurst::burst,
+                this::persistRegionLocked,
+                (id, plate, e) -> {
+                    failure.compareAndSet(null, e);
+                    onWarn("Failed to write Tectonic Plate " + CacheKey.keyX(id) + " " + CacheKey.keyZ(id));
+                    onError(e);
+                },
+                e -> {
+                    failure.compareAndSet(null, e);
+                    onError(e);
+                }
+        );
+        if (failure.get() != null) {
+            throw new IllegalStateException("Failed to flush mantle storage " + dataFolder.getAbsolutePath(), failure.get());
+        }
+    }
+
+    private void persistRegion(long id, P plate) throws Exception {
+        plate.close();
+        try {
+            regionIO.write(fileForRegion(dataFolder, id, false).getName(), plate);
+        } catch (Exception error) {
+            reopenAfterTargetedSaveFailure(plate, error);
+            throw error;
+        } catch (Error error) {
+            reopenAfterTargetedSaveFailure(plate, error);
+            throw error;
+        }
+        oldFileForRegion(dataFolder, id).delete();
+    }
+
+    /**
+     * Flush-path variant: takes the same per-region lock every access/unload path uses (this
+     * was the one region-mutating path that bypassed it) and evicts with identity checks so a
+     * plate resurrected by a concurrent load is never clobbered by a bulk clear.
+     */
+    private void persistRegionLocked(long id, P plate) throws Exception {
+        try {
+            hyperLock.withNasty(CacheKey.keyX(id), CacheKey.keyZ(id), () -> {
+                persistRegion(id, plate);
+                removeLoadedRegion(id, plate);
+                lastUse.remove(id);
+                toUnload.remove(id);
+            });
+        } catch (Exception e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new IllegalStateException(t);
+        }
+    }
+
+    private boolean trySaveIdleTectonicPlate(long id) {
+        int regionX = CacheKey.keyX(id);
+        int regionZ = CacheKey.keyZ(id);
+        if (!hyperLock.tryLock(regionX, regionZ)) {
+            return false;
+        }
+        try {
+            return saveTectonicPlateLocked(id, false);
+        } finally {
+            hyperLock.unlock(regionX, regionZ);
+        }
+    }
+
+    private boolean saveTectonicPlateLocked(long id, boolean retainDemanded) {
+        P plate = loadedRegions.get(id);
+        if (plate == null) {
+            return true;
+        }
+
+        if (!plate.trySeal()) {
+            return false;
+        }
+        try {
+            persistTargetedRegion(id, plate);
+        } catch (Exception error) {
+            throw new IllegalStateException("Failed to save Tectonic Plate "
+                    + CacheKey.keyX(id) + " " + CacheKey.keyZ(id), error);
+        }
+
+        if (retainDemanded && hyperLock.hasQueuedThreads(CacheKey.keyX(id), CacheKey.keyZ(id))) {
+            plate.reopen();
+            use(id);
+            return false;
+        }
+
+        if (removeLoadedRegion(id, plate)) {
+            lastUse.remove(id);
+            toUnload.remove(id);
+        }
+        return true;
+    }
+
+    private void persistTargetedRegion(long id, P plate) throws Exception {
+        try {
+            regionIO.write(fileForRegion(dataFolder, id, false).getName(), plate);
+        } catch (Exception error) {
+            reopenAfterTargetedSaveFailure(plate, error);
+            throw error;
+        } catch (Error error) {
+            reopenAfterTargetedSaveFailure(plate, error);
+            throw error;
+        }
+        oldFileForRegion(dataFolder, id).delete();
+    }
+
+    private void reopenAfterTargetedSaveFailure(P plate, Throwable failure) {
+        try {
+            plate.reopen();
+        } catch (Throwable reopenFailure) {
+            failure.addSuppressed(reopenFailure);
+        }
+    }
+
+    private void putLoadedRegion(int x, int z, Long key, P region) {
+        loadedRegions.put(key, region);
+        int slot = residentSlot(x, z);
+        Resident<P> next = new Resident<>(x, z, region);
+        while (true) {
+            Resident<P> current = residents.get(slot);
+            if (current != null && current.collided()) {
+                return;
+            }
+            Resident<P> target = current == null || (current.x == x && current.z == z) ? next : Resident.collision();
+            if (residents.compareAndSet(slot, current, target)) {
+                return;
+            }
+        }
+    }
+
+    private boolean removeLoadedRegion(long id, P region) {
+        if (!loadedRegions.remove(id, region)) {
+            return false;
+        }
+        int slot = residentSlot(CacheKey.keyX(id), CacheKey.keyZ(id));
+        Resident<P> current = residents.get(slot);
+        if (current != null && current.region == region) {
+            residents.compareAndSet(slot, current, null);
+        }
+        return true;
+    }
+
+    private void markForUnload(long id) {
+        toUnload.add(id);
+        int x = CacheKey.keyX(id);
+        int z = CacheKey.keyZ(id);
+        Resident<P> resident = residents.get(residentSlot(x, z));
+        if (resident != null && !resident.collided() && resident.x == x && resident.z == z) {
+            resident.unloadPending = true;
+        }
+    }
+
+    private static int residentSlot(int x, int z) {
+        return ((x & RESIDENT_MASK) << RESIDENT_SHIFT) | (z & RESIDENT_MASK);
+    }
+
+    /**
+     * Direct-mapped mirror of the resident plates. Region keys pack x and z, so their Long hashes
+     * collide along diagonals and tree-ify the map bins; plate lookups on hot paths read this table
+     * instead. A slot two resident regions compete for is marked collided and defers to the map. Each entry also
+     * caches its last use stamp and whether a trim queued it for unload, so repeat accesses skip the use maps.
+     */
+    private static final class Resident<P> {
+        private static final Resident<?> COLLISION = new Resident<>(0, 0, null);
+
+        private final int x;
+        private final int z;
+        private final P region;
+        private volatile long used;
+        private volatile boolean unloadPending;
+
+        private Resident(int x, int z, P region) {
+            this.x = x;
+            this.z = z;
+            this.region = region;
+            this.used = Long.MIN_VALUE / 2;
+        }
+
+        @SuppressWarnings("unchecked")
+        private static <P> Resident<P> collision() {
+            return (Resident<P>) COLLISION;
+        }
+
+        private boolean collided() {
+            return this == COLLISION;
+        }
+    }
+
+    private void ensureOpen() {
+        if (closed.get()) {
+            throw new MantleClosedException("The Mantle is closed");
+        }
+    }
+
+    private static void deleteDirectory(File file) {
+        if (file == null || !file.exists()) {
+            return;
+        }
+
+        File[] children = file.listFiles();
+        if (children != null) {
+            for (File child : children) {
+                if (child.isDirectory()) {
+                    deleteDirectory(child);
+                } else {
+                    child.delete();
+                }
+            }
+        }
+
+        file.delete();
+    }
+
+    public interface RegionIO<P> {
+        P read(String name) throws Exception;
+
+        void write(String name, P region) throws Exception;
+
+        void close() throws Exception;
+    }
+
+    protected abstract P createRegion(int x, int z);
+
+    protected abstract <T> void setChunkValue(C chunk, int x, int y, int z, T value);
+
+    protected abstract <T> void removeChunkValue(C chunk, int x, int y, int z, Class<T> type);
+
+    protected abstract <T> T getChunkValue(C chunk, int x, int y, int z, Class<T> type);
+
+    protected abstract <T> void iterateChunkValues(C chunk, Class<T> type, Consumer4<Integer, Integer, Integer, T> iterator);
+
+    protected abstract void deleteChunkSlice(C chunk, Class<?> type);
+}
